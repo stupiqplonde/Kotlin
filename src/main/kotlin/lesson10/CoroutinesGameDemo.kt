@@ -37,6 +37,14 @@ fun main() = runBlocking {
         5,
         1000L
     )
+
+    println("на ${player.name} наложен бафф урона + 10")
+    player.applyAttackBuff(
+        10,
+        20,
+        1000L
+    )
+    player.printStatus()
     println("[~] запуск боя")
 
     val attackJob = launch {
