@@ -55,4 +55,13 @@ sealed class GameEvent{
     data class QuestCompleted(
         val questId: String
     ) : GameEvent()
+
+    data class DialogStarted(
+        val dialogId: String
+    ) : GameEvent()
+
+    data class DialogChoiceSelected(
+        val choiceId: String,
+        val dialogId: String
+    ) : GameEvent()
 }
