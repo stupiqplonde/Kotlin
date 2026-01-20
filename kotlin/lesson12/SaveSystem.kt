@@ -35,4 +35,19 @@ class SaveSystem{
         }
     }
 
+    fun printProgress(playerId: String){
+        println("===прогресс===")
+
+        val playerData = progress[playerId]
+        if (playerData == null){
+            println("прогресса нет")
+            return
+        }
+        for ((questId, steps) in playerData){
+            println("Квест: $questId")
+            println("Шаги: $steps")
+            println("============")
+        }
+    }
+
 }

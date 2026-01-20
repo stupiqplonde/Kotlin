@@ -41,7 +41,8 @@ sealed class GameEvent{
 
     data class QuestCompleted(
         val playerId: String,
-        val questId: String
+        val questId: String,
+        val stepId: String? = null
     ) : GameEvent()
 
     // НПС и диалоги
@@ -71,13 +72,6 @@ sealed class GameEvent{
         val playerId: String,
         val achievementId: String
     ) : GameEvent()
-
-//    data class PlayerProgressSaved(
-//        val playerId: String,
-//        val playerName: String,
-//        val questId: String,
-//        val stepId: String
-//    ) : GameEvent()
 
     data class GoldPaid(
         val playerId: String = "1",
