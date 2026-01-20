@@ -72,10 +72,25 @@ sealed class GameEvent{
         val achievementId: String
     ) : GameEvent()
 
+//    data class PlayerProgressSaved(
+//        val playerId: String,
+//        val playerName: String,
+//        val questId: String,
+//        val stepId: String
+//    ) : GameEvent()
+
+    data class GoldPaid(
+        val playerId: String = "1",
+        val payerName: String,
+        val recipientName: String,
+        val amount: Int
+    ) : GameEvent()
+
     data class PlayerProgressSaved(
         val playerId: String,
-        val playerName: String,
         val questId: String,
         val stepId: String
     ) : GameEvent()
+
+
 }
