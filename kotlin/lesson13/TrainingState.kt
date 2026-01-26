@@ -41,5 +41,6 @@ enum class TrainingState{
     TALKING,
     ACCEPTED,
     DUMMY_KILLED,
-    COMPLETED
+    COMPLETED,
+    FAILED
 }
