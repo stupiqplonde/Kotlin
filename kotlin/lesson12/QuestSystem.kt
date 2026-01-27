@@ -1,7 +1,5 @@
 package lesson12
 
-import kotlin.math.E
-
 // Квест = шаги выполнения (mini state Graph)
 class QuestSystem{
     data class QuestProgressState(
@@ -18,8 +16,8 @@ class QuestSystem{
 
     val questStates = mutableMapOf<String, QuestProgressState>()
 
-    private var questId = "simple_dimple_0.0.1"
-    private var questId1 = "kill_kirill_or_pay_gold"
+    var questId = "simple_dimple_0.0.1"
+    var questIdTwo = "kill_kirill_or_pay_gold"
     private var progressByPlayer: MutableMap<String, QuestProgressState> = mutableMapOf()
     // progressByPlayer[playerId] - проверка состояния происхождения квеста конкретным игроком
 
@@ -36,7 +34,7 @@ class QuestSystem{
                     questStates.remove("${questId}_$playerId")
                 }
             }
-            questId1 -> {
+            questIdTwo -> {
                 if (state.questStarted && (state.killKirill || state.goldPaid)) {
                     val method = if (state.killKirill) "убийством" else "деньгами"
                     println("Квест $questId завершен для игрока $playerId через $method")
@@ -207,9 +205,9 @@ class QuestSystem{
                 state.reportedBack
                 ){
                     state.questStarted = true
-                    println("Квест ${questId} завершен для игрока $playerId")
-                EventBus.post(GameEvent.QuestCompleted(playerId, questId))
-                EventBus.post(GameEvent.PlayerProgressSaved(playerId, questId, "QUEST_COMPLETED"))
+                    println("Квест ${questId} завершен для игрока $player")
+                EventBus.post(GameEvent.QuestCompleted(player, questId))
+                EventBus.post(GameEvent.PlayerProgressSaved(player, questId, "QUEST_COMPLETED"))
             }
         }
     }
