@@ -13,6 +13,7 @@ class VillageQuestSystem{
                 is GameEvent.DialogueChoiceSelected,
                 is GameEvent.CharacterDied -> {
                     progress.handle(event.playerId, event)
+                    progress.printPosition(event.playerId, event)
                 }
                 else -> {}
             }

@@ -24,4 +24,12 @@ class VillageQuestProgress{
             // class.simpleName - это свойство, которое возвращает короткое имя класса(строку). Без указания пакета в котором он лежит
         }
     }
+
+    fun printPosition(playerId: String, event: GameEvent){
+        val current = getState(playerId)
+        val node = graph.getNode(current)
+        val next = node.next(event)
+        val past = node.past(event)
+        println("[INFO] now: $current, next: $next, past: $past")
+    }
 }

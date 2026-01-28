@@ -24,20 +24,20 @@ class VillageQuestGraph{
         val secretEnd = StateNodeV2(VillageQuestState.SECRET_ENDING)
         val killedOrk = StateNodeV2(VillageQuestState.KILLED_ORK)
 
-        start.add(GameEvent.DialogueStarted::class.java, VillageQuestState.TALKED_TO_ELDER)
+        start.add(GameEvent.DialogueStarted::class.java, VillageQuestState.TALKED_TO_ELDER, VillageQuestState.NOT_STARTED)
 
-        talked.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.ACCEPTED_HELP )
-        talked.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.REFUSED_HELP)
+        talked.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.ACCEPTED_HELP, VillageQuestState.NOT_STARTED )
+        talked.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.REFUSED_HELP, VillageQuestState.NOT_STARTED)
 
-        accepted.add(GameEvent.CharacterDied::class.java, VillageQuestState.KILLED_KIRILL_SHAMAN)
-        accepted.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.MADE_PEACE)
+        accepted.add(GameEvent.CharacterDied::class.java, VillageQuestState.KILLED_KIRILL_SHAMAN, VillageQuestState.TALKED_TO_ELDER)
+        accepted.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.MADE_PEACE, VillageQuestState.ACCEPTED_HELP)
 
-        refused.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.HELPED_KIRILL)
+        refused.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.HELPED_KIRILL, VillageQuestState.TALKED_TO_ELDER)
 
-        refused.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.HERO_ENDING)
-        madePeace.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.PEACE_ENDING)
-        helpedKirill.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.BAD_ENDING)
-        killedOrk.add(GameEvent.CharacterDied::class.java, VillageQuestState.SECRET_ENDING)
+        refused.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.HERO_ENDING, VillageQuestState.KILLED_KIRILL_SHAMAN)
+        madePeace.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.PEACE_ENDING, VillageQuestState.ACCEPTED_HELP)
+        helpedKirill.add(GameEvent.DialogueChoiceSelected::class.java, VillageQuestState.BAD_ENDING, VillageQuestState.REFUSED_HELP)
+        killedOrk.add(GameEvent.CharacterDied::class.java, VillageQuestState.SECRET_ENDING, VillageQuestState.ACCEPTED_HELP)
 
         // регистрируем список
         listOf(
@@ -52,5 +52,4 @@ class VillageQuestGraph{
     fun getNode(state: VillageQuestState): StateNodeV2{
         return nodes[state]!!
     }
-
 }
