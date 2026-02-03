@@ -1,5 +1,7 @@
 package lesson12
 
+import lesson16.GameEventV2
+
 sealed class GameEvent(open val playerId: String){
     // боевые события //
     data class CharacterDied(
@@ -97,6 +99,13 @@ sealed class GameEvent(open val playerId: String){
         val oldState: String,
         val newState: String
     ) : GameEvent(playerId)
+
+    data class QuestStateChanged(
+        override val playerId: String,
+        val questId: String,
+        val oldState: String,
+        val newState: String
+    ): GameEventV2(playerId)
 
 
 }
