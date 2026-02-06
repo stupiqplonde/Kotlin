@@ -52,7 +52,7 @@ class gameState{
 
 val HEALING_POTION = Item(
     "potion_heal",
-    "Healthing potion",
+    "Healthiness potion",
     ItemType.POTION,
     12
 )
@@ -84,6 +84,9 @@ fun putInToSlot(
         val toAdd = minOf(addCount, freeSpace)
         newSlots[slotIndex] = ItemStack(item, current.count + toAdd)
         return newSlots
+    }
+    if (current.item.id == "wood_sword"){
+        val notSwordPut = 1
     }
 
     // если предмет другой (или максимальное число стака = 1) - не кладем данный предмет
@@ -163,6 +166,104 @@ fun main() = KoolApplication{
                 .margin(20.dp)
                 .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 20.dp))
                 .padding(12.dp)
+
+            Column {
+                Text ("Player: ${game.playerId.use()}"){}
+                Text ("HP: ${game.hp.use()} Gold: ${game.gold.use()}"){}
+                Text ("Potion: ${game.poisonTicksLeft.use()}"){}
+
+                modifier.padding(10.dp)
+                Row {
+                    modifier.margin(top = 6.dp)
+
+                    val slots = game.hotbar.use()
+                    // выводим инфу
+                    val selected = game.selectedSlot.use()
+
+                    for (i in 0 until 9){
+                        // рисуем слоты
+                        val isSelected = (i == selected)
+                        // Box - контейнер
+                        Box {
+                            modifier
+                                .size(50.dp, 50.dp)
+                                .margin(end = 10.dp)
+                                .background(
+                                    RoundRectBackground(
+                                        if (isSelected){ Color (0.2f, 0.6f, 1f, 0.8f)} else{ Color(0f, 0f, 0f, 0.8f)
+                                        },
+                                        8.dp
+                                    )
+                                )
+                                .onClick{
+                                    game.selectedSlot.value = i
+                                }
+                            val stack = slots[i]
+                            // назначение слота = имя предмета + кол-во предметов
+                            if (stack == null){
+                                Text (""){}
+                            }else{
+                                Column {
+                                    modifier.padding(6.dp)
+                                    Text (stack.item.name){
+                                        modifier.font(sizes.smallText)
+                                    }
+
+                                    Text ("x${stack.count}"){
+                                        modifier.font(sizes.smallText)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = 6.dp)
+
+                    Button ("Наложить эффект") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val idx = game.selectedSlot.value
+                                val updated = putInToSlot(game.hotbar.value, idx, HEALING_POTION, 1)
+                                game.hotbar.value = updated
+                            }
+                    }
+                    Button ("Дать деревянный меч") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val idx = game.selectedSlot.value
+                                val updated = putInToSlot(game.hotbar.value, idx, WOOD_SWORD, 1)
+                                game.hotbar.value = updated
+                            }
+                    }
+                    Button ("Использовать предмет") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val idx = game.selectedSlot.value
+                                val (updatedSlots, used) = useSelected(game.hotbar.value, idx)
+                                game.hotbar.value = updatedSlots
+
+                                if (used != null && used.item.type == ItemType.POTION){
+                                    game.hp.value = (game.hp.value + 20).coerceAtMost(100)
+                                }
+                            }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = 6.dp)
+
+                    Button("Poison +5") {
+                        modifier.onClick {
+                            game.poisonTicksLeft.value = game.poisonTicksLeft.value + 5
+                        }
+                    }
+                }
+            }
         }
     }
 }
