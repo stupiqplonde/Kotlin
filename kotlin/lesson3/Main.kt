@@ -25,6 +25,7 @@ import kotlin.reflect.typeOf
 class GameState{
     val playerId = mutableStateOf("Player")
     val hp = mutableStateOf(100)
+    val protect = mutableStateOf(0)
     val gold = mutableStateOf(0)
     val poisonTicksLeft = mutableStateOf(0)
     val regenTicksLeft = mutableStateOf(0)
@@ -49,6 +50,13 @@ val WOOD_SWORD = Item(
     "wood_sword",
     "Wood sword",
     ItemType.WEAPON,
+    1
+)
+
+val PROTECT = Item(
+    "броня",
+    "protect",
+    ItemType.ARMOR,
     1
 )
 
@@ -145,11 +153,17 @@ fun main() = KoolApplication {
         if (game.poisonTicksLeft.value > 0) {
             poisonTimerSec += Time.deltaT
 
-
             if (poisonTimerSec >= 1f) {
-                poisonTimerSec = 0f
-                game.poisonTicksLeft.value = game.poisonTicksLeft.value - 1
-                game.hp.value = (game.hp.value - 2).coerceAtLeast(0)
+                if (game.protect.value > 0){
+                    poisonTimerSec = 0f
+                    val prot = game.protect.value * 0.1
+                    game.poisonTicksLeft.value = game.poisonTicksLeft.value - 1
+                    game.hp.value = (game.hp.value - 2 * prot).coerceAtLeast(0)
+                } else {
+                    poisonTimerSec = 0f
+                    game.poisonTicksLeft.value = game.poisonTicksLeft.value - 1
+                    game.hp.value = (game.hp.value - 2).coerceAtLeast(0)
+                }
             }
         } else {
             poisonTimerSec = 0f
@@ -188,7 +202,161 @@ fun main() = KoolApplication {
                     modifier.margin(bottom = sizes.gap)
                 }
                 Text("Potion: ${game.poisonTicksLeft.use()}") {}
-                Text("Player: ${game.playerId.use()}") {}
+                Text("Regen: ${game.regenTicksLeft.use()}") {}
+                Text("Protect: ${game.protect.use()}"){}
+                Text("HP NPC: ${game.hp.use()} Gold: ${game.gold.use()}") {
+                    modifier.margin(bottom = sizes.gap)
+                }
+
+                val slots = game.hotbar.use()
+                val selected = game.selectedSlot.use()
+                Row {
+                    modifier.margin(bottom = sizes.smallGap)
+                     for (i in 0 until 9){
+                         val isSelected = (i == selected)
+
+                         Box {
+                             modifier
+                                 .size(50.dp, 50.dp)
+                                 .margin(end = 10.dp)
+                                 .background(
+                                     RoundRectBackground(
+                                         if (isSelected){ Color (0.2f, 0.6f, 1f, 0.8f)} else{ Color(0f, 0f, 0f, 0.8f)
+                                         },
+                                         8.dp
+                                     )
+                                 )
+                                 .onClick{
+                                     game.selectedSlot.value = i
+                                 }
+                             // номера слотов
+                             Text("${i + 1}"){
+                                 modifier
+                                     .padding(4.dp)
+                                     .font(sizes.smallText)
+                             }
+
+                             val stack = slots[i]
+                             if (stack != null){
+                                 Column {
+                                     modifier.padding(top = 18.dp, start = 6.dp)
+                                     Text (stack.item.name){
+                                         modifier.font(sizes.smallText)
+                                     }
+                                     Text ("x${stack.count}"){
+                                         modifier.font(sizes.smallText)
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                }
+
+                // отображение отладочного текста что в выбранном слоте
+                val selectedStack = slots[selected]
+                Text (if(selectedStack == null) "Выбранно: (пусто)"
+                    else "Выбранно: ${selectedStack.item.name} x${selectedStack.count}"
+                ){
+                    modifier.margin(top = sizes.gap, bottom = sizes.gap)
+                }
+
+                Row {
+                    modifier.margin(top = sizes.smallGap)
+
+                    Button ("Получить зелье"){
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                val idx = game.selectedSlot.value
+
+                                val (updatedSlots, leftOver) = putIntoSlot(game.hotbar.value, idx, HEALING_POTION, 6)
+                                // вернул пару значений (1 - новые слоты с предметом, 2 - это число не поместившихся предметов)
+
+                                game.hotbar.value = updatedSlots
+                                // присваиваем новый список -> UI увидит изменения состояния и обновится
+
+                                if (leftOver > 0 ){
+                                    game.gold.value += leftOver
+                                }
+
+                            }
+                    }
+
+                    Button ("Получить меч"){
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                val idx = game.selectedSlot.value
+
+                                val (updatedSlots, leftOver) = putIntoSlot(game.hotbar.value, idx, WOOD_SWORD, 1)
+                                // вернул пару значений (1 - новые слоты с предметом, 2 - это число не поместившихся предметов)
+
+                                game.hotbar.value = updatedSlots
+                                // присваиваем новый список -> UI увидит изменения состояния и обновится
+
+                                if (leftOver > 0 ){
+                                    game.gold.value += 1
+                                }
+
+                            }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = sizes.smallGap)
+
+                    Button ("Использовать предмет") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val idx = game.selectedSlot.value
+                                val (updatedSlots, used) = useSelected(game.hotbar.value, idx)
+                                game.hotbar.value = updatedSlots
+
+                                if (used != null && used.item.type == ItemType.POTION){
+                                    game.hp.value = (game.hp.value + 20).coerceAtMost(100)
+                                }
+                            }
+                    }
+
+                    Button ("Атаковать (Меч)"){
+                        modifier.onClick{
+                            val idx = game.selectedSlot.value
+                            val stack = game.hotbar.value[idx]
+
+                            // атака будет рукой, если в слоте меч то атака сильнее
+                            if (stack != null && stack.item.type == ItemType.WEAPON){
+                                game.dummyHp.value = (game.dummyHp.value - 10).coerceAtLeast(0)
+                            }else{
+                                game.dummyHp.value = (game.dummyHp.value - 3).coerceAtLeast(0)
+                            }
+                        }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = sizes.smallGap)
+
+                    Button ("Наложить яд"){
+                        modifier.onClick{
+                            game.poisonTicksLeft.value += 5
+                        }
+                    }
+
+                    Button ("Сбросить манекен"){
+                         modifier
+                             .margin(start = 5.dp)
+                             .onClick {
+                                 game.dummyHp.value = 50
+                             }
+                    }
+
+                    Button ("Получить броню"){
+                        modifier.onClick{
+                            game.protect.value += 5
+                        }
+                    }
+                }
             }
         }
     }
