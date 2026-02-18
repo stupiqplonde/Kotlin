@@ -199,7 +199,7 @@ class QuestSystem(
 
     init {
         graph.on(QuestState.START, TalkedToNpc::class.java){ _ ->
-            QuestSystem.OFFERED
+            QuestState.OFFERED
         }
 
         graph.on(QuestState.OFFERED, ChoiceSelected::class.java){ e ->
@@ -489,6 +489,33 @@ fun main() = KoolApplication {
                             when(opt.id){
                                 "talk" -> {
                                     bus.publish(TalkedToNpc(pid, npc.id))
+                                }
+
+                                "collect_herb" -> {
+                                    val (updated, left) = addItem(game.inventory.value, HERB, 1)
+                                    game.inventory.value = updated
+
+                                    bus.publish(ItemCollected(pid, HERB.id, 1))
+
+                                    if (left > 0) game.gold.value += left
+                                }
+
+                                "give_herb" -> {
+                                    val (updated, success) = removeItem(game.inventory.value, HERB.id, 1)
+                                    game.inventory.value = updated
+
+                                    if (success){
+                                        bus.publish(TalkedToNpc(pid, npc.id))
+
+                                        val (updated, left) = addItem(game.inventory.value, HERB, 1)
+
+                                        game.gold.value += 1
+                                        game.inventory.value = updated
+
+                                        if (left > 0) game.gold.value += left
+                                    } else{
+                                        pushLog(game, "[ERROR]: herb don't given")
+                                    }
                                 }
                             }
                         }
