@@ -3,9 +3,11 @@ package lesson6
 import de.fabmax.kool.KoolApplication           // KoolApplication - запускает Kool-приложение (окно + цикл рендера)
 import de.fabmax.kool.addScene                  // addScene - функция "добавь сцену" в приложение (у тебя она просила отдельный импорт)
 import de.fabmax.kool.math.FLT_EPSILON
+import de.fabmax.kool.math.QuatD
 
 import de.fabmax.kool.math.Vec3f                // Vec3f - 3D-вектор (x, y, z), как координаты / направление
 import de.fabmax.kool.math.deg                  // deg - превращает число в "градусы" (угол)
+import de.fabmax.kool.modules.filesystem.PhysicalFileSystem
 import de.fabmax.kool.scene.*                   // scene.* - Scene, defaultOrbitCamera, addColorMesh, lighting и т.д.
 
 import de.fabmax.kool.modules.ksl.KslPbrShader  // KslPbrShader - готовый PBR-шейдер (материал)
@@ -15,6 +17,7 @@ import de.fabmax.kool.util.Time                 // Time.deltaT - сколько 
 import de.fabmax.kool.pipeline.ClearColorLoad   // ClearColorLoad - режим: "не очищай экран, оставь то что уже нарисовано"
 
 import de.fabmax.kool.modules.ui2.*             // UI2: addPanelSurface, Column, Row, Button, Text, dp, remember, mutableStateOf
+import de.fabmax.kool.physics.geometry.PlaneGeometry
 import jdk.jshell.execution.JdiInitiator
 import kotlinx.coroutines.flow.StateFlow
 import lesson2.gameState
@@ -442,16 +445,58 @@ class QuestManager(
     }
 
     private fun handleEvent(event: GameEvent){
-        val player = event.playerId
+        val pid = event.playerId
 
         for (quest in quests){
-            val currentState = stateByPlayer
-            val nextState = currentState.nextState
+            val current = getStateName(pid, quest.questId)
+            val next = quest.nextStateName(current, event, game)
+
+            if (next != current){
+                setStateName(pid, quest.questId, next)
+
+                bus.publish(
+                    QuestStateChanged(
+                        pid,
+                        quest.questId,
+                        next
+                    )
+                )
+
+                bus.publish(
+                    PlayerProgressSaved(
+                        pid,
+                        "Quest ${quest.questId} изменен вы состояние $next"
+                    )
+                )
+            }
         }
     }
 }
 
+// сохранение квестов в файл
 
+class SaveSystem(
+    private val bus: EventBus,
+    private val game: GameState,
+    private val questManager: QuestManager,
+    private val quest: List<QuestDefinition>
+){
+    init {
+        bus.subscribe { event ->
+            if (event is PlayerProgressSaved){
+                saveAllForPlayer(event.playerId)
+            }
+        }
+    }
+
+    private fun saveFile(playerId: String): File{
+        val dir = File
+    }
+
+    private fun saveAllForPlayer(playerId: String){
+        val f = saveAllForPlayer()
+    }
+}
 
 
 
