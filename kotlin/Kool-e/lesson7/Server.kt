@@ -180,6 +180,107 @@ data class PendingCommand(
     var delayLeftSec: Float
 )
 
+class ServerWorld(
+    private val bus: EventBus
+) {
+    private val questId = "q_alchemist"
+
+    // словарь всех игроков сервера
+    private val serverPlayers = mutableMapOf<String, PlayerData>()
+
+    // inbox - очередь выполнения команд с учетом пинга
+    private val inbox = mutableListOf<PendingCommand>()
+
+    // метод проверки существования игрока в бд, и если нет -> создаем
+    private fun ensurePlayer(playerId: String): PlayerData {
+        val existing = serverPlayers[playerId]
+        if (existing != null) return existing
+
+        // если пользователь существует в бд, то вернуть его если нет -> создаем
+        val created = PlayerData(
+            100,
+            0,
+            QuestState.START
+        )
+        serverPlayers[playerId] = created
+        return created
+    }
+
+    // снимок серверных данных
+    fun getSnapshot(playerId: String): PlayerData {
+        val player = ensurePlayer(playerId)
+
+        // копия важна тк мы в клиенте не может менять информацию об игроке
+        // мы отправляем (return) новый объект PlayerData, чтобы клиент не мог прочесть и отобразить
+        return PlayerData(
+            player.hp,
+            player.gold,
+            player.questState
+        )
+    }
+
+    fun sendCommand(cmd: GameCommand, networkLagMs: Int) {
+        val lagSec = networkLagMs / 1000f
+        // перевод миллисекунд в сек
+
+        // добавляем в очередь выполнения команд
+        inbox.add(
+            PendingCommand(
+                cmd,
+                lagSec
+            )
+        )
+    }
+
+    // метод update вызывается каждый кадр, нужен для уменьшения задержки и выполнения команд который дошли
+    fun update(deltaSec: Float){
+        // delta - сколько прошло времени с прошлого кадра (Time.deltaT)
+        // уменьшаем таймер у каждой команды за прошедшее delta время
+        for (pending in inbox){
+            pending.delayLeftSec -= deltaSec
+        }
+
+        // отфильтруем очередь в отдельный список с командами с готовыми к выполнению
+        val ready = inbox.filter { it.delayLeftSec <= 0 }
+
+        // удаляем команды, которые надо выполнить из списка очереди
+        inbox.removeAll(ready)
+
+        for (pending in ready){
+            applyCommand(pending.cmd)
+        }
+    }
+
+    private fun applyCommand(cmd: GameCommand){
+        val player = ensurePlayer(cmd.playerId)
+
+        when(cmd){
+            is CmdTalkToNpc -> {
+                // публикация события от сервера всей игре это подтверждение сервера, что игрок поговорил
+                bus.publish(TalkedToNpc(cmd.playerId, cmd.npcId))
+
+                // после рассылки сервер меняет соответственно правилам которые прописанны в dialogueFor
+                val newState = nextQuestState(player.questState, TalkedToNpc(cmd.playerId, cmd.npcId), cmd.npcId)
+                setQuestState(cmd.playerId, player, newState)
+            }
+
+            is CmdSelectChoice -> {
+                // публикация события от сервера всей игре это подтверждение сервера, что игрок поговорил
+                bus.publish(ChoiceSelected(cmd.playerId, cmd.npcId, cmd.choiceId))
+
+                // после рассылки сервер меняет соответственно правилам которые прописанны в dialogueFor
+                val newState = nextQuestState(player.questState, ChoiceSelected(cmd.playerId, cmd.npcId, cmd.choiceId), cmd.npcId)
+                setQuestState(cmd.playerId, player, newState)
+            }
+
+            is CmdLoadPlayer -> {
+                loadPlayerFromDisk(cmd.playerId, player)
+                // после загрузки сохранения игрока - желательно тоже сохранить событием
+                bus.publish(PlayerProgressSaved(cmd.playerId, "Игрок загрузил сохранение с диска"))
+            }
+        }
+    }
+}
 
 
 
