@@ -36,6 +36,8 @@ import de.fabmax.kool.util.Time                 // Time.deltaT - сколько 
 import de.fabmax.kool.pipeline.ClearColorLoad   // ClearColorLoad - режим: "не очищай экран, оставь то что уже нарисовано"
 import de.fabmax.kool.modules.ui2.*             // UI2: addPanelSurface, Column, Row, Button, Text, dp, remember, mutableStateOf
 import de.fabmax.kool.modules.ui2.UiModifier.*
+import de.fabmax.kool.physics.geometry.PlaneGeometry
+import kotlinx.coroutines.flow.Flow
 
 // Flow корутины
 import kotlinx.coroutines.launch                    // запуск корутин
@@ -52,9 +54,12 @@ import kotlinx.serialization.Serializable           // аннотация, чт�
 import kotlinx.serialization.encodeToString         // запись с файла
 import kotlinx.serialization.decodeFromString       // чтение с файла
 import kotlinx.serialization.json.Json              // формат файла Json
+import lesson7.CmdLoadDataToServer
+import lesson7.CmdLoadPlayer
 import lesson7.QuestState
 
 import java.io.File                                 // для работы с файлами
+import kotlin.io.readText
 
 // события игры создаем как раньше, но отправляем через flow
 
@@ -133,6 +138,11 @@ class ServerWorld(
         // emit может разослать событие не сразу, если подписчики медленные (очередь потоков)
         // Готовим событие заранее и рассылаем его в корутине
     }
+
+    fun applyLoaded(playerSave: PlayerSave){
+        _playerState.value = playerSave
+        PlayerProgressSaved(_playerState.value.playerId,"Loaded from JSON")
+    }
 }
 
 // сериализация - сохранение данных в файл
@@ -145,25 +155,35 @@ class SaveSystem {
         encodeDefaults = true
     }
 
+
+
     private fun saveFile(playerId: String): File{
         val dir = File("saves")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "$playerId.json")
     }
 
-    fun save(player: PlayerSave){
-        val text = json.encodeToString(player)
+    fun save(playerSave: PlayerSave){
+        val text = json.encodeToString(playerSave)
 
-        saveFile(player.playerId).writeText(text)
+        saveFile(playerSave.playerId).writeText(text)
     }
 
-//    fun loadFile(playerId: String): File{
-//        val file = saveFile(playerId)
-//        if (!file.exists()) return null
-//
-//        val text = json.decodeFromString(file)
-//        saveFile(playerId).readText(text)
-//    }
+    fun load(playerId: String): PlayerSave?{
+        val file = saveFile(playerId)
+        if (!file.exists()) return null
+
+        val text = file.readText()
+        val server = ServerWorld(playerId)
+        val playerSave = json.decodeFromString<PlayerSave>(text)
+
+        try {
+            server.applyLoaded(playerSave)
+            return playerSave
+        }catch (e: Exception){
+            return null
+        }
+    }
 }
 
 class UiState{
@@ -226,6 +246,34 @@ fun main() = KoolApplication{
             }
         }
 
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
+                .padding(12.dp)
+
+            Row {
+                modifier.margin(top = 6.dp)
+
+                Button("загрузить сохранение") {
+                    modifier.onClick{
+                        saver.save(server.playerState.value)
+                    }
+                }
+
+                Button("выгрузить сохранение") {
+                    modifier.onClick{
+                        saver.load(server.playerState.value.playerId)
+                    }
+                }
+            }
+        }
     }
 }
 
