@@ -33,6 +33,7 @@ import kotlinx.coroutines.delay
 
 // импорты Serialization
 import kotlinx.serialization.Serializable           // аннотация, что можно сохранять
+import kotlinx.serialization.builtins.ShortArraySerializer
 import kotlinx.serialization.encodeToString         // запись с файла
 import kotlinx.serialization.decodeFromString       // чтение с файла
 import kotlinx.serialization.json.Json              // формат файла Json
@@ -436,6 +437,47 @@ fun main() = KoolApplication {
                     .margin(16.dp)
                     .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
                     .padding(12.dp)
+
+                Text("Player: ${hud.activePlayerId.use()}"){}
+                Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+
+                Text("QuestState: ${hud.questState.use()}"){}
+                Text("Poison ticks left: ${hud.poisonTicksLeft.use()}"){}
+                Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}Ms"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+
+                Row {
+                    Button("Switch Player"){
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                hud.activePlayerId.value = if (hud.activePlayerId.value == "Oleg") "Stas" else "Oleg"
+                            }
+                    }
+                    Button("Save JSON"){
+                        modifier.onClick{
+                            val server = Shared.server
+                            if (server == null) return@onClick
+
+                            val playerId = hud.activePlayerId.value
+
+                            val event = SaveRequested(playerId)
+                            val published = server.tryPublish(event)
+
+                            if (published){
+                                hudLog(hud, "сохранено без использования корутин")
+                            } else {
+                                coroutineScope.launch {
+                                    server.publish(event)
+                                    hudLog(hud, "сохранено с использованием корутин")
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
