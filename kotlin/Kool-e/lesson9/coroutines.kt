@@ -4,6 +4,7 @@ import de.fabmax.kool.KoolApplication           // KoolApplication - запус�
 import de.fabmax.kool.addScene                  // addScene - функция "добавь сцену" в приложение (у тебя она просила отдельный импорт)
 import de.fabmax.kool.math.Vec3f                // Vec3f - 3D-вектор (x, y, z), как координаты / направление
 import de.fabmax.kool.math.deg                  // deg - превращает число в "градусы" (угол)
+import de.fabmax.kool.math.sqrDistancePointToRay
 import de.fabmax.kool.scene.*                   // scene.* - Scene, defaultOrbitCamera, addColorMesh, lighting и т.д.
 import de.fabmax.kool.modules.ksl.KslPbrShader  // KslPbrShader - готовый PBR-шейдер (материал)
 import de.fabmax.kool.util.Color                // Color - цвет (RGBA)
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch                    // запуск корути
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
+import kotlinx.serialization.builtins.ShortArraySerializer
 import lesson7.ClientUiState
 
 
@@ -79,13 +81,13 @@ class EffectManager(
     private val scope: kotlinx.coroutines.CoroutineScope
     // scope - место где будут запускаться и жить корутины
     // передаем сюда scene.coroutineScope чтобы все было привязано к сцене
-){
+) {
     private var poisonJob: Job? = null
     // Job - это задача-корутина
 
     private var regenJob: Job? = null
 
-    fun applyPoison(ticks: Int, damagePerTick: Int, intervalMs: Long){
+    fun applyPoison(ticks: Int, damagePerTick: Int, intervalMs: Long) {
         poisonJob?.cancel()
         // если яд уже был применен фннулируем его
         // ?. - безопасный вызов, если poisonJob == null, то cancel не вызовется
@@ -94,14 +96,195 @@ class EffectManager(
         game.poisonTicksLeft.value += ticks
 
         poisonJob = scope.launch {
-            while (isActive && game.poisonTicksLeft.value > 0){
-                delay(300)
-                game.poisonTicksLeft.value - 1
-                game.hp.value - 1
-                pushLog(game, "${game.hp.value}")
+            while (isActive && game.poisonTicksLeft.value > 0) {
+                delay(intervalMs)
+                game.poisonTicksLeft.value -= 1
+                game.hp.value = (game.hp.value - damagePerTick).coerceAtLeast(0)
+                pushLog(game, "Тик яда: -$damagePerTick, HP: ${game.hp.value} / ${game.maxHp}")
             }
         }
     }
+
+    fun applyRegen(ticks: Int, healPerTick: Int, intervalMs: Long) {
+        regenJob?.cancel()
+
+        game.regenTicksLeft.value += ticks
+        pushLog(game, "Эффект регена применен на ${game.playerId} длительность ${intervalMs}")
+
+        regenJob = scope.launch {
+            while (isActive && game.regenTicksLeft.value > 0) {
+                delay(intervalMs)
+
+                game.regenTicksLeft.value -= 1
+                game.hp.value = (game.hp.value + healPerTick).coerceAtMost(game.maxHp)
+                pushLog(game, "Тик регена: +$healPerTick, HP: ${game.hp.value} / ${game.maxHp}")
+            }
+            pushLog(game, "Эффект регена завершен")
+        }
+    }
+
+    fun cancelPoison() {
+        poisonJob?.cancel()
+        poisonJob = null
+        game.poisonTicksLeft.value = 0
+        pushLog(game, "Яд снят (cancel)")
+    }
+
+    fun cancelRegen() {
+        regenJob?.cancel()
+        regenJob = null
+        game.regenTicksLeft.value = 0
+        pushLog(game, "реген снят (cancel)")
+    }
+}
+
+class CooldownManager(
+    private val game: GameState,
+    private val scope: kotlinx.coroutines.CoroutineScope
+){
+    private var cooldownJob: Job? = null
+
+    fun startAttackCooldown(totalMs: Long){
+        cooldownJob?.cancel()
+
+        game.attackCoolDownMsLeft.value = totalMs
+        pushLog(game,"Кулдаун атаки ${totalMs}Ms")
+
+        cooldownJob = scope.launch {
+            val step = 100L
+
+            while (isActive && game.attackCoolDownMsLeft.value > 0L){
+                delay(step)
+                game.attackCoolDownMsLeft.value = (game.attackCoolDownMsLeft.value - step).coerceAtLeast(0)
+            }
+        }
+    }
+
+    fun canAttack(): Boolean{
+        return game.attackCoolDownMsLeft.value <= 0L
+    }
+}
+
+fun main() = KoolApplication{
+    val game = GameState()
+    println("Запуск приложения")
+
+    addScene {
+        defaultOrbitCamera()
+
+        addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader {
+                color { vertexColor() }
+                metallic(0.7f)
+                roughness(0.4f)
+            }
+
+            onUpdate {
+                transform.rotate(45f.deg * Time.deltaT, Vec3f.X_AXIS)
+            }
+        }
+
+        lighting.singleDirectionalLight {
+            setup(Vec3f(-1f, -1f, -1f))
+            setColor(Color.WHITE, 5f)
+        }
+        val effects = EffectManager(game, coroutineScope)
+        val cooldowns = CooldownManager(game, coroutineScope)
+
+        SharedActions.effects = effects
+        SharedActions.cooldown = cooldowns
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+                Text("HP: ${game.hp.use()}"){}
+                Text("Тики яда: ${game.poisonTicksLeft.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+                Text("Тики регена: ${game.regenTicksLeft.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+                Text("Тики кулдауна: ${game.attackCoolDownMsLeft.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+
+                Row {
+                    Button("Яд +5"){
+                        modifier.margin(end = 8.dp).onClick{
+                            SharedActions.effects?.applyPoison(5, 2, 1000L)
+                        }
+                    }
+
+                    Button("Отмена яда"){
+                        modifier.margin(end = 8.dp).onClick{
+                            SharedActions.effects?.cancelPoison()
+                        }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = sizes.gap)
+                    Button("Реген +5"){
+                        modifier.margin(end = 8.dp).onClick{
+                            SharedActions.effects?.applyRegen(5, 2, 1000L)
+                        }
+                    }
+
+                    Button("Отмена регена"){
+                        modifier.margin(end = 8.dp).onClick{
+                            SharedActions.effects?.cancelRegen()
+                        }
+                    }
+                }
+
+                Row {
+                    modifier.margin(top = sizes.smallGap)
+                    Button("Атаковать (кд 1.2 сек"){
+                        modifier.margin(end = 8.dp).onClick{
+                            val cd = SharedActions.cooldown
+
+                            if (cd == null){
+                                pushLog(game, "CooldownManager еще не готов")
+                                return@onClick
+                            }
+
+                            if (!cd.canAttack()){
+                                pushLog(game,"Атаковать нельзя")
+                                return@onClick
+                            }
+
+                            cd.startAttackCooldown(totalMs = 1200L)
+                        }
+                    }
+                }
+
+                Text("Логи:"){modifier.margin(top = sizes.gap)}
+
+                val lines = game.logLines.use()
+                for (line in lines){
+                    Text(line){modifier.font(sizes.smallText)}
+                }
+            }
+        }
+    }
+}
+
+// shared action - мост между сценами
+
+object SharedActions{
+    var effects: EffectManager? = null
+    var cooldown: CooldownManager? = null
 }
 
 
