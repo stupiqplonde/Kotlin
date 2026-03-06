@@ -1,6 +1,5 @@
 package lesson10
 
-import com.sun.source.tree.Scope
 import de.fabmax.kool.KoolApplication           // KoolApplication - запускает Kool-приложение (окно + цикл рендера)
 import de.fabmax.kool.addScene                  // addScene - функция "добавь сцену" в приложение (у тебя она просила отдельный импорт)
 import de.fabmax.kool.math.Vec3f                // Vec3f - 3D-вектор (x, y, z), как координаты / направление
@@ -11,9 +10,6 @@ import de.fabmax.kool.util.Color                // Color - цвет (RGBA)
 import de.fabmax.kool.util.Time                 // Time.deltaT - сколько секунд прошло между кадрами
 import de.fabmax.kool.pipeline.ClearColorLoad   // ClearColorLoad - режим: "не очищай экран, оставь то что уже нарисовано"
 import de.fabmax.kool.modules.ui2.*             // UI2: addPanelSurface, Column, Row, Button, Text, dp, remember, mutableStateOf
-import de.fabmax.kool.modules.ui2.UiModifier.*
-import de.fabmax.kool.physics.geometry.PlaneGeometry
-import kotlinx.coroutines.flow.Flow
 
 // Flow корутины
 import kotlinx.coroutines.launch                    // запуск корутин
@@ -23,28 +19,18 @@ import kotlinx.coroutines.flow.MutableStateFlow     // табло состоян
 import kotlinx.coroutines.flow.StateFlow            // только для чтения
 import kotlinx.coroutines.flow.asSharedFlow         // отдать наружу только SharedFlow
 import kotlinx.coroutines.flow.asStateFlow          // отдать только StateFlow
-import kotlinx.coroutines.flow.collect              // слушать поток
 
-import kotlinx.coroutines.launch                    // запуск корутин
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 
 // импорты Serialization
 import kotlinx.serialization.Serializable           // аннотация, что можно сохранять
 import kotlinx.serialization.builtins.ShortArraySerializer
-import kotlinx.serialization.encodeToString         // запись с файла
-import kotlinx.serialization.decodeFromString       // чтение с файла
 import kotlinx.serialization.json.Json              // формат файла Json
-import lesson8.ServerWorld
-import lesson9.CooldownManager
-import lesson9.EffectManager
-import lesson9.SharedActions
-import java.awt.Choice
+import lesson8.pushLog
 
 import java.io.File                                 // для работы с файлами
-import java.text.NumberFormat
 import kotlin.io.readText
 
 @Serializable
@@ -53,8 +39,14 @@ data class PlayerSave(
     val hp: Int,
     val gold: Int,
     val poisonTicksLeft: Int,
+    val attackSpeedBuffTicksLeft: Int,
     val attackCooldownMsLeft: Long,
     val questState: String
+)
+
+class NpcState(
+    val npcId: String,
+    val hp: Int
 )
 
 // События игровые - Flow будет рассылать их всем системам
@@ -102,6 +94,16 @@ data class SaveRequested(
     override val playerId: String
 ): GameEvent
 
+data class CommandRejected(
+    override val playerId: String,
+    val reason: String
+): GameEvent
+
+data class AttackSpeedBuffApplied(
+    override val playerId: String,
+    val ticks: Int
+): GameEvent
+
 class GameServer{
     private val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
     // дополнительный буфер
@@ -110,10 +112,14 @@ class GameServer{
 
     private val _players = MutableStateFlow(
         mapOf(
-            "Oleg" to PlayerSave("Oleg", 100, 0, 0, 0L, "START"),
-            "Stas" to PlayerSave("Stas", 100, 0, 0, 0L, "START")
+            "Oleg" to PlayerSave("Oleg", 100, 0, 0, 0,0L, "START"),
+            "Stas" to PlayerSave("Stas", 100, 0, 0, 0,0L, "START")
         )
     )
+
+//    private val _npc = MutableStateFlow(
+//        "Kirill" to NpcSave("Kirill", 50)
+//    )
 
     val players: StateFlow<Map<String, PlayerSave>> = _players.asStateFlow()
 
@@ -140,8 +146,10 @@ class GameServer{
     }
 
     fun getPlayer(playerId: String): PlayerSave{
-        return _players.value[playerId] ?: PlayerSave(playerId, 100, 0, 0, 0L, "START")
+        return _players.value[playerId] ?: PlayerSave(playerId, 100, 0, 0, 0, 0L, "START")
     }
+
+
 }
 
 class DamageSystem(
@@ -241,16 +249,39 @@ class QuestSystem(
                 }
             }
             is ChoiceSelected -> {
-                if (e.npcId != npcId) return
+                try {
+                    if (e.npcId != npcId) return
 
-                if (player.questState == "OFFERED"){
-                    val newState =
-                        if (e.choiceId == "help") "GOOD_END"
-                        else "EVIL_END"
+                    if (player.questState == "OFFERED") {
+                        val newState =
+                            if (e.choiceId == "help") "GOOD_END"
+                            else "EVIL_END"
 
-                    server.updatePlayer(e.playerId) {it.copy(questState = newState)}
-                    publish(QuestStateChanged(e.playerId, questId, newState))
+                        server.updatePlayer(e.playerId) { it.copy(questState = newState) }
+                        publish(QuestStateChanged(e.playerId, questId, newState))
+                    }
+                }catch (e: Exception){
+                    publish(CommandRejected(player.playerId, "Ошибка перехода"))
                 }
+//                try {
+//                    if (player.questState == "START") {
+//                        if (e.choiceId == "help") {
+//                            return
+//                        }
+//                    }
+//                }catch (e: Exception){
+//                    publish(CommandRejected(e.playerId, questId))
+//                }
+//                if (e.npcId != npcId) return
+//
+//                if (player.questState == "OFFERED"){
+//                    val newState =
+//                        if (e.choiceId == "help") "GOOD_END"
+//                        else "EVIL_END"
+//
+//                    server.updatePlayer(e.playerId) {it.copy(questState = newState)}
+//                    publish(QuestStateChanged(e.playerId, questId, newState))
+//                }
             }
             else -> {}
         }
@@ -289,12 +320,52 @@ class SaveSystem {
     }
 }
 
+class AttackSpeedBuffSystem(
+    private val server: GameServer,
+    private val scope: kotlinx.coroutines.CoroutineScope
+) {
+    private val buffJobs = mutableMapOf<String, Job>()
+
+    fun onEvent(e: GameEvent) {
+        if (e is AttackSpeedBuffApplied) {
+                server.updatePlayer(e.playerId) { player ->
+                    player.copy(attackSpeedBuffTicksLeft = player.attackSpeedBuffTicksLeft + e.ticks)
+            }
+
+            if (buffJobs.containsKey(e.playerId)) {
+                return
+            }
+
+            val job = scope.launch {
+                val tickRate = 1000L
+
+                while (isActive) {
+                    delay(tickRate)
+
+                    val player = server.getPlayer(e.playerId)
+                    if (player.attackSpeedBuffTicksLeft <= 0) {
+                        break
+                    }
+
+                    server.updatePlayer(e.playerId) { player ->
+                        player.copy(attackSpeedBuffTicksLeft = player.attackSpeedBuffTicksLeft - 1)
+                    }
+                }
+                buffJobs.remove(e.playerId)
+            }
+
+            buffJobs[e.playerId] = job
+        }
+    }
+}
+
 class HudState{
     val activePlayerId = mutableStateOf("Oleg")
 
     val hp = mutableStateOf(100)
     val gold = mutableStateOf(0)
     val poisonTicksLeft = mutableStateOf(0)
+    val attackSpeedBuffTicksLeft = mutableStateOf(0L)
     val questState = mutableStateOf("START")
     val attackCooldownMsLeft = mutableStateOf(0L)
 
@@ -309,6 +380,7 @@ object Shared{
     var server: GameServer? = null
     var saver: SaveSystem? = null
     var cooldowns: CooldownSystem? = null
+    var attackSpeedBuff: AttackSpeedBuffSystem? = null
     var quests: QuestSystem? = null
     var poison: PoisonSystem? = null
     var damage: DamageSystem? = null
@@ -317,6 +389,7 @@ object Shared{
 
 fun main() = KoolApplication {
     val hud = HudState()
+    val npc = NpcState("Kirill", 50)
 
     addScene {
         defaultOrbitCamera()
@@ -347,6 +420,7 @@ fun main() = KoolApplication {
         val cooldowns = CooldownSystem(server, coroutineScope)
         val poison = PoisonSystem(server, coroutineScope)
         val quests = QuestSystem(server, coroutineScope)
+        val attackSpeedBuff = AttackSpeedBuffSystem(server, coroutineScope)
 
         Shared.server = server
         Shared.saver = saver
@@ -354,6 +428,7 @@ fun main() = KoolApplication {
         Shared.cooldowns = cooldowns
         Shared.poison = poison
         Shared.quests = quests
+        Shared.attackSpeedBuff = attackSpeedBuff
 
         coroutineScope.launch{
             server.events.collect{ event ->
@@ -406,6 +481,8 @@ fun main() = KoolApplication {
                         is TalkedToNpc -> "${event.playerId} начал разговор с ${event.npcId}"
                         is ChoiceSelected -> "${event.playerId} выбрал ${event.choiceId}"
                         is SaveRequested -> "Запрос на сохранение"
+                        is AttackSpeedBuffApplied -> "Бафф скорости атаки"
+                        is CommandRejected -> "Ошибка перехода"
                         is QuestStateChanged -> "${event.playerId} перешел на новый этап квеста ${event.newState}"
                         else -> "Неизвестная команда"
                     }
@@ -424,6 +501,7 @@ fun main() = KoolApplication {
                     hud.poisonTicksLeft.value = player.poisonTicksLeft
                     hud.questState.value = player.questState
                     hud.attackCooldownMsLeft.value = player.attackCooldownMsLeft
+                    hud.attackSpeedBuffTicksLeft.value = player.attackSpeedBuffTicksLeft
                 }
             }
         }
@@ -476,6 +554,25 @@ fun main() = KoolApplication {
                                 }
                             }
                         }
+                    }
+                }
+                Row {
+                    Button("Target Attack"){
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                Shared.server?.tryPublish(AttackPressed(hud.activePlayerId.value, npc.npcId))
+                                hudLog(hud, "АТАКА")
+                            }
+                    }
+
+                    Button("Buf Attack"){
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                Shared.server?.tryPublish(AttackSpeedBuffApplied(hud.activePlayerId.value, 5 ))
+                                hudLog(hud, "Скорость атаки +5")
+                            }
                     }
                 }
             }
