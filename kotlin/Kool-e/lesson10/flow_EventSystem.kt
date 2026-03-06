@@ -28,7 +28,6 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable           // аннотация, что можно сохранять
 import kotlinx.serialization.builtins.ShortArraySerializer
 import kotlinx.serialization.json.Json              // формат файла Json
-import lesson8.pushLog
 
 import java.io.File                                 // для работы с файлами
 import kotlin.io.readText
@@ -164,6 +163,8 @@ class DamageSystem(
             }
         }
     }
+
+
 }
 
 
@@ -172,6 +173,18 @@ class CooldownSystem(
     private val scope: kotlinx.coroutines.CoroutineScope
 ){
     private val cooldownJobs = mutableMapOf<String, Job>()
+
+    private val baseCooldownMs = 1200L
+    private val buffedCooldownMs = 700L
+
+    fun getCurrentCooldown(playerId: String): Long {
+        val player = server.getPlayer(playerId)
+        return if (player.attackSpeedBuffTicksLeft > 0) {
+            buffedCooldownMs
+        } else {
+            baseCooldownMs
+        }
+    }
 
     fun startCooldown(playerId: String, totalMs: Long){
         cooldownJobs[playerId]?.cancel()
@@ -328,8 +341,8 @@ class AttackSpeedBuffSystem(
 
     fun onEvent(e: GameEvent) {
         if (e is AttackSpeedBuffApplied) {
-                server.updatePlayer(e.playerId) { player ->
-                    player.copy(attackSpeedBuffTicksLeft = player.attackSpeedBuffTicksLeft + e.ticks)
+            server.updatePlayer(e.playerId) { player ->
+                player.copy(attackSpeedBuffTicksLeft = player.attackSpeedBuffTicksLeft + e.ticks)
             }
 
             if (buffJobs.containsKey(e.playerId)) {
@@ -365,7 +378,7 @@ class HudState{
     val hp = mutableStateOf(100)
     val gold = mutableStateOf(0)
     val poisonTicksLeft = mutableStateOf(0)
-    val attackSpeedBuffTicksLeft = mutableStateOf(0L)
+    val attackSpeedBuffTicksLeft = mutableStateOf(0)
     val questState = mutableStateOf("START")
     val attackCooldownMsLeft = mutableStateOf(0L)
 
@@ -516,27 +529,33 @@ fun main() = KoolApplication {
                     .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
                     .padding(12.dp)
 
-                Text("Player: ${hud.activePlayerId.use()}"){}
-                Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}"){
+                Text("Npc: ${npc.npcId}") {}
+                Text("Npc HP: ${hud.hp.use()}") {
                     modifier.margin(bottom = sizes.gap)
                 }
 
-                Text("QuestState: ${hud.questState.use()}"){}
-                Text("Poison ticks left: ${hud.poisonTicksLeft.use()}"){}
-                Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}Ms"){
+                Text("Player: ${hud.activePlayerId.use()}") {}
+                Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}") {
+                    modifier.margin(bottom = sizes.gap)
+                }
+
+                Text("QuestState: ${hud.questState.use()}") {}
+                Text("Poison ticks left: ${hud.poisonTicksLeft.use()}") {}
+                Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}Ms") {
                     modifier.margin(bottom = sizes.gap)
                 }
 
                 Row {
-                    Button("Switch Player"){
+                    Button("Switch Player") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick {
                                 hud.activePlayerId.value = if (hud.activePlayerId.value == "Oleg") "Stas" else "Oleg"
+
                             }
                     }
-                    Button("Save JSON"){
-                        modifier.onClick{
+                    Button("Save JSON") {
+                        modifier.onClick {
                             val server = Shared.server
                             if (server == null) return@onClick
 
@@ -545,7 +564,7 @@ fun main() = KoolApplication {
                             val event = SaveRequested(playerId)
                             val published = server.tryPublish(event)
 
-                            if (published){
+                            if (published) {
                                 hudLog(hud, "сохранено без использования корутин")
                             } else {
                                 coroutineScope.launch {
@@ -557,28 +576,117 @@ fun main() = KoolApplication {
                     }
                 }
                 Row {
-                    Button("Target Attack"){
+                    Button("Target Attack") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick {
+                                Shared.damage?.onEvent(DamageDealt(hud.activePlayerId.value, npc.npcId, 10))
                                 Shared.server?.tryPublish(AttackPressed(hud.activePlayerId.value, npc.npcId))
                                 hudLog(hud, "АТАКА")
                             }
                     }
 
-                    Button("Buf Attack"){
+                    Button("Buf Attack") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick {
-                                Shared.server?.tryPublish(AttackSpeedBuffApplied(hud.activePlayerId.value, 5 ))
+                                Shared.server?.tryPublish(AttackSpeedBuffApplied(hud.activePlayerId.value, 5))
                                 hudLog(hud, "Скорость атаки +5")
                             }
+                    }
+
+                    Button("Сохранить") {
+                        modifier
+                            .margin(start = 4.dp, top = 4.dp, bottom = 4.dp)
+                            .onClick {
+                                Shared.server?.tryPublish(SaveRequested(hud.activePlayerId.value))
+                                hudLog(hud, "Сохранение данных ${hud.activePlayerId.value}")
+                            }
+                    }
+                }
+
+                Text("КВЕСТ") { modifier.margin(bottom = 4.dp) }
+
+                when (hud.questState.use()) {
+                    "START" -> {
+                        Button("Говорить с алхимиком") {
+                            modifier
+                                .margin(vertical = 4.dp)
+                                .onClick {
+                                    Shared.server?.tryPublish(TalkedToNpc(hud.activePlayerId.value, "alchemist"))
+                                }
+                        }
+                    }
+                    "OFFERED" -> {
+                        Row {
+                            Button("Помочь") {
+                                modifier
+                                    .margin(end = 4.dp)
+                                    .onClick {
+                                        Shared.server?.tryPublish(ChoiceSelected(hud.activePlayerId.value, "alchemist", "help"))
+                                    }
+                            }
+                            Button("Драться") {
+                                modifier
+                                    .margin(start = 4.dp)
+                                    .onClick {
+                                        Shared.server?.tryPublish(ChoiceSelected(hud.activePlayerId.value, "alchemist", "evil"))
+                                    }
+                            }
+                        }
+                    }
+                    "GOOD_END" -> {
+                    }
+                    "EVIL_END" -> {
+                    }
+                }
+
+                Box {
+                    modifier
+                        .height(1.dp)
+                        .margin(vertical = 8.dp)
+                }
+
+                Text("ЛОГИ (последние 20)") { modifier.margin(bottom = 4.dp) }
+
+                Box {
+                    modifier
+                        .height(400.dp)
+                        .padding(8.dp)
+
+                    Column {
+                        val lines = hud.log.use()
+                        if (lines.isEmpty()) {
+                            Text("Нет событий...") { modifier }
+                        } else {
+                            for (line in lines) {
+                                Text(line) {
+                                    modifier
+                                        .margin(bottom = 2.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (hud.attackCooldownMsLeft.use() > 0) {
+                    Text("Кулдаун активен: ${hud.attackCooldownMsLeft.use()}ms") {
+                        modifier
+                            .margin(top = 8.dp)
+                    }
+                }
+
+                if (hud.attackSpeedBuffTicksLeft.use() > 0) {
+                    Text("Бафф скорости активен: ${hud.attackSpeedBuffTicksLeft.use()} сек (кулдаун 700ms)") {
+                        modifier
+                            .margin(top = 4.dp)
                     }
                 }
             }
         }
     }
 }
+
 
 
 
