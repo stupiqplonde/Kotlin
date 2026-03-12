@@ -118,6 +118,11 @@ data class CmdSwitchPlayer(
     val newPlayerId: String
 ): GameCommand
 
+data class CmdAddQuest(
+    override val playerId: String,
+    val questId: String
+): GameCommand
+
 // серверные данные квеста---
 
 data class QuestStateOnServer(
@@ -146,6 +151,12 @@ class QuestSystem {
                 else -> "Проход открыт"
             }
 
+            "q_cook" -> when (step){
+                0 -> "найти чечевицу"
+                1 -> "сварить суп"
+                else -> "Суп готов"
+            }
+
             else -> "Неизвестный квест"
         }
     }
@@ -164,6 +175,12 @@ class QuestSystem {
                 0 -> "Идти к NPC: Страж"
                 1 -> "Найди чем расплатиться со Стражем"
                 else -> "Готово"
+            }
+
+            "q_cook" -> when (step){
+                0 -> "Иди к NPC: Алхимик"
+                1 -> "Одолжи у Алхимика чан для зелья"
+                else -> "Суп готов"
             }
 
             else -> ""
@@ -236,6 +253,7 @@ class GameServer{
             is CmdOpenQuest -> openQuest(cmd.playerId, cmd.questId)
             is CmdPinQuest -> pinQuest(cmd.playerId, cmd.questId)
             is CmdProgressQuest -> progressQuest(cmd.playerId, cmd.questId)
+            is CmdAddQuest -> addQuest(cmd.playerId, cmd.questId)
             is CmdSwitchPlayer -> {}
         }
     }
@@ -299,6 +317,15 @@ class GameServer{
                 quests[i] = q.copy(isNew = false, step = newStep, status = newStatus)
             }
         }
+
+        setPlayerQuests(playerId, quests)
+        _events.emit(QuestJournalUpdated(playerId))
+    }
+
+    private suspend fun addQuest(playerId: String, questId: String){
+        val quests = getPlayerQuests(playerId).toMutableList()
+
+        quests.add(QuestStateOnServer("q_cook", "приготовить чечевичный суп", 0, QuestStatus.ACTIVE, true, false))
 
         setPlayerQuests(playerId, quests)
         _events.emit(QuestJournalUpdated(playerId))
@@ -393,12 +420,12 @@ fun main() = KoolApplication {
                 .padding(12.dp)
 
             Column {
-                Text("Player: ${hud.activePlayerIdUi.use()}"){}
+                Text("Player: ${hud.activePlayerIdUi.use()}") {}
                 modifier.margin(bottom = sizes.gap)
 
                 Row {
-                    Button("Switch Player"){
-                        modifier.margin(end = 8.dp).onClick{
+                    Button("Switch Player") {
+                        modifier.margin(end = 8.dp).onClick {
                             val newId = if (hud.activePlayerIdUi.value == "Oleg") "Stas" else "Oleg"
 
                             hud.activePlayerIdUi.value = newId
@@ -409,44 +436,82 @@ fun main() = KoolApplication {
                     }
                 }
 
-                Text("Активные квесты:"){modifier.margin(top = sizes.gap)}
+                Text("Активные квесты:") { modifier.margin(top = sizes.gap) }
 
                 val entries = hud.questEntries.use()
                 val selectedId = hud.selectedQuestId.use()
 
-                for (q in entries){
+                for (q in entries) {
                     val symbol = markerSymbol(q.marker)
 
                     val line = "$symbol ${q.title}"
                     // Кнопка открытия квеста
-                    Button(line){
-                        modifier.margin(bottom = sizes.smallGap).onClick{
+                    Button(line) {
+                        modifier.margin(bottom = sizes.smallGap).onClick {
                             hud.selectedQuestId.value = q.questId
                             // если квест открыт отправить серверу команду, что он уже не новый
                             server.trySend(CmdOpenQuest(hud.activePlayerIdUi.value, q.questId))
                         }
                     }
 
-                    Text(" - ${q.objectiveText}"){
+                    Text(" - ${q.objectiveText}") {
                         modifier.font(sizes.smallText).margin(bottom = sizes.smallGap)
                     }
 
                     // Если квест выбран, то показываем маркер подсказку
-                    if (selectedId == q.questId){
-                        Text(" marker: ${q.markerHint}"){
+                    if (selectedId == q.questId) {
+                        Text(" marker: ${q.markerHint}") {
                             modifier.font(sizes.smallText).margin(bottom = sizes.gap)
                         }
 
-                        Row{
-                            Button("Pin"){
-                                modifier.margin(end = 8.dp).onClick{
+                        Row {
+                            Button("Pin") {
+                                modifier.margin(end = 8.dp).onClick {
                                     server.trySend(CmdPinQuest(hud.activePlayerIdUi.value, q.questId))
                                 }
                             }
 
-                            Button("Progress"){
-                                modifier.margin(end = 8.dp).onClick{
+                            Button("Progress") {
+                                modifier.margin(end = 8.dp).onClick {
                                     server.trySend(CmdProgressQuest(hud.activePlayerIdUi.value, q.questId))
+                                }
+                            }
+
+                            Button("Add Quest") {
+                                modifier.margin(end = 8.dp).onClick {
+                                    server.trySend(CmdAddQuest(hud.activePlayerIdUi.value, q.questId))
+                                }
+                            }
+
+                            Button("Отображать закрепленные"){
+                                modifier.margin(end = 8.dp).onClick {
+                                    entries.sortedWith(compareBy(
+                                        {it.marker == QuestMarker.PINNED}
+                                    ))
+                                }
+                            }
+
+                            Button("Отображать новые"){
+                                modifier.margin(end = 8.dp).onClick {
+                                    entries.sortedWith(compareBy(
+                                        {it.marker == QuestMarker.NEW}
+                                    ))
+                                }
+                            }
+
+                            Button("Отображать активные"){
+                                modifier.margin(end = 8.dp).onClick {
+                                    entries.sortedWith(compareBy(
+                                        {it.status == QuestStatus.ACTIVE}
+                                    ))
+                                }
+                            }
+
+                            Button("Отображать завершенные"){
+                                modifier.margin(end = 8.dp).onClick {
+                                    entries.sortedWith(compareBy(
+                                        {it.marker == QuestMarker.COMPLETED}
+                                    ))
                                 }
                             }
                         }
