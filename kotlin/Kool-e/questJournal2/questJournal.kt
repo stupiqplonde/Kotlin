@@ -11,6 +11,7 @@ import de.fabmax.kool.util.Color                // Color - цвет (RGBA)
 import de.fabmax.kool.util.Time                 // Time.deltaT - сколько секунд прошло между кадрами
 import de.fabmax.kool.pipeline.ClearColorLoad   // ClearColorLoad - режим: "не очищай экран, оставь то что уже нарисовано"
 import de.fabmax.kool.modules.ui2.*             // UI2: addPanelSurface, Column, Row, Button, Text, dp, remember, mutableStateOf
+import jdk.jfr.DataAmount
 import jdk.jfr.StackTrace
 
 import kotlinx.coroutines.launch                    // запуск корутин
@@ -90,6 +91,11 @@ data class QuestProgressed(
     val questId: String
 ): GameEvent
 
+data class CommandRejected(
+    override val playerId: String,
+    val reason: String
+): GameEvent
+
 // команды UI -> сервер---
 
 sealed interface GameCommand{
@@ -121,6 +127,11 @@ data class CmdSwitchPlayer(
 data class CmdAddQuest(
     override val playerId: String,
     val questId: String
+): GameCommand
+
+data class CmdGiveGold(
+    override val playerId: String,
+    val amount: Int
 ): GameCommand
 
 // серверные данные квеста---
@@ -240,6 +251,14 @@ class GameServer{
     )
     val questByPlayer: StateFlow<Map<String, List<QuestStateOnServer>>> = _questByPLayer.asStateFlow()
 
+    private val _playerGold = MutableStateFlow<Map<String, Int>>(
+        mapOf(
+            "Oleg" to 500,
+            "Stas" to 300
+        )
+    )
+    val playerGold: StateFlow<Map<String, Int>> = _playerGold.asStateFlow()
+
     fun start(scope: kotlinx.coroutines.CoroutineScope){
         scope.launch {
             commands.collect { cmd ->
@@ -254,8 +273,26 @@ class GameServer{
             is CmdPinQuest -> pinQuest(cmd.playerId, cmd.questId)
             is CmdProgressQuest -> progressQuest(cmd.playerId, cmd.questId)
             is CmdAddQuest -> addQuest(cmd.playerId, cmd.questId)
+            is CmdGiveGold -> giveGold(cmd.playerId, cmd.amount)
             is CmdSwitchPlayer -> {}
         }
+    }
+
+    private suspend fun giveGold(playerId: String, amount: Int){
+        val currentGold = _playerGold.value[playerId] ?: 0
+        val newGold = currentGold + amount
+
+        if (newGold > 999) {
+            val goldMap = _playerGold.value.toMutableMap()
+            goldMap[playerId] = 999
+            _playerGold.value = goldMap
+            _events.emit(CommandRejected(playerId, "Золото не может быть больше 999. Значение обрезано до 999."))
+        } else {
+            val goldMap = _playerGold.value.toMutableMap()
+            goldMap[playerId] = newGold
+            _playerGold.value = goldMap
+        }
+        _events.emit(QuestJournalUpdated(playerId))
     }
 
     private fun getPlayerQuests(playerId: String): List<QuestStateOnServer>{
@@ -423,8 +460,13 @@ fun main() = KoolApplication {
                 Text("Player: ${hud.activePlayerIdUi.use()}") {}
                 modifier.margin(bottom = sizes.gap)
 
+                val gold = server.playerGold.value[hud.activePlayerIdUi.value] ?: 0
+                Text("Gold: $gold / 999"){
+                    modifier.margin(bottom = 8.dp)
+                }
+
                 Row {
-                    Button("Switch Player") {
+                    Button("Switch Player"`) {
                         modifier.margin(end = 8.dp).onClick {
                             val newId = if (hud.activePlayerIdUi.value == "Oleg") "Stas" else "Oleg"
 
