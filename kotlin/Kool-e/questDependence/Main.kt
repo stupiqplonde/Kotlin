@@ -214,26 +214,27 @@ class QuestSystem {
     // здесь прописываем текст целей квестов по шагам для каждого квеста
     fun objectiveFor(q: QuestStateOnServer): String {
 
-        if (q.status == QuestStatus.LOCKED){
+        if (q.status == QuestStatus.LOCKED) {
             return "квест недоступен"
         }
 
-        if (q.questId == "q_alchemist"){
-            return when(q.step){
+        if (q.questId == "q_alchemist") {
+            return when (q.step) {
                 0 -> "Поговори с Алхимиком"
                 1 -> {
-                    when(q.branch){
+                    when (q.branch) {
                         QuestBranch.NONE -> "Выбери путь: Help или Threat"
                         QuestBranch.HELP -> "Собери траву ${q.progressCurrent} / ${q.progressTarget}"
                         QuestBranch.THREAT -> "Собери золото ${q.progressCurrent} / ${q.progressTarget}"
                     }
                 }
+
                 2 -> "Вернись к Алхимику и заверши квест"
                 else -> "Квест завершен"
             }
         }
-        if (q.questId == "q_guard"){
-            return when (q.step){
+        if (q.questId == "q_guard") {
+            return when (q.step) {
                 0 -> "Поговори со Стражником"
                 1 -> "Заплати стражнику золото: ${q.progressCurrent} / ${q.progressTarget}"
                 2 -> "Сдай квест у стражника"
@@ -244,28 +245,192 @@ class QuestSystem {
     }
 
     // подсказки куда идти - в будущем для карты и компаса
-    private fun markerHintFor(questId: String, step: Int): String {
-        return when (questId) {
-            "q_alchemist" -> when (step) {
-                0 -> "Идти к NPC: Алхимик"
-                1 -> "Собрать Herb x2"
-                2 -> "Вернись к Алхимику"
-                else -> "Готово"
+    fun markerHintFor(q: QuestStateOnServer): String {
+        if (q.status == QuestStatus.LOCKED) {
+            return "сначала разблокируй квест"
+        }
+
+        if (q.questId == "q_alchemist") {
+            return when (q.step) {
+                0 -> "NPC: Алхимик"
+                1 -> {
+                    when (q.branch) {
+                        QuestBranch.NONE -> "Выбери вариант диалога"
+                        QuestBranch.HELP -> "Собери траву"
+                        QuestBranch.THREAT -> "Найди золото"
+                    }
+                }
+
+                2 -> "NPC: Алхимик"
+                else -> "готово"
+            }
+        }
+
+        if (q.questId == "q_guard") {
+            return when (q.step) {
+                0 -> "NPC: Стражник"
+                1 -> "Найди золото для оплаты"
+                2 -> "NPC: Стражник"
+                else -> "готово"
+            }
+        }
+        return ""
+    }
+
+    fun branchTextFor(branch: QuestBranch): String {
+        return when (branch) {
+            QuestBranch.NONE -> "Путь не выбран"
+            QuestBranch.HELP -> "Путь помощи"
+            QuestBranch.THREAT -> "Путь угрозы"
+        }
+    }
+
+    fun lockedReasonFor(q: QuestStateOnServer): String{
+        if (q.status != QuestStatus.LOCKED) return ""
+
+        return if(q.unlockRequiredQuestId == null){
+            "Причина блокировки неизвестна"
+        }else{
+            "Нужно завершить квест ${q.unlockRequiredQuestId}"
+        }
+    }
+
+    fun markerFor(q: QuestStateOnServer): QuestMarker{
+        return when{
+            q.status == QuestStatus.LOCKED -> QuestMarker.LOCKED
+            q.status == QuestStatus.COMPLETED -> QuestMarker.COMPLETED
+            q.isPinned -> QuestMarker.PINNED
+            q.isNew -> QuestMarker.NEW
+            else -> QuestMarker.NONE
+        }
+    }
+
+    fun progressBarText(current: Int, target: Int, blocks: Int = 10): String{
+        if (target <= 0) return  ""
+
+        val ratio = current.toFloat() / target.toFloat()
+        // ratio - отношение прогресса к цели
+
+        val filled = (ratio * blocks).toInt().coerceIn(8, blocks)
+        // coerceIn - ограничение от 0 до ... blocks (10) числа
+
+        val empty = blocks - filled
+
+        return "▰".repeat(filled) + "▱".repeat(empty)
+    }
+
+    fun toJournalEntry(q: QuestStateOnServer): QuestJournalEntry{
+        val progressText = if(q.progressTarget > 0) "${q.progressCurrent} / ${q.progressTarget}" else ""
+
+        val progressBar = if(q.progressTarget > 0) progressBarText(q.progressCurrent, q.progressTarget) else ""
+
+        return QuestJournalEntry(
+            q.questId,
+            q.title,
+            q.status,
+            objectiveFor(q),
+            progressText,
+            progressBar,
+            markerFor(q),
+            markerHintFor(q),
+            branchTextFor(q.branch),
+            lockedReasonFor(q)
+        )
+    }
+
+    fun applyEvent(
+        quests: List<QuestStateOnServer>,
+        event: GameEvent
+    ): List<QuestStateOnServer>{
+        val copy = quests.toMutableList()
+
+        for (i in copy.indices){
+            val q = copy[i]
+
+            if (q.status == QuestStatus.LOCKED) continue
+            if (q.status == QuestStatus.COMPLETED) continue
+
+            if (q.questId == "q_alchemist"){
+                copy[i] = updateAlchemist(q, event)
             }
 
-            "q_guard" -> when (step) {
-                0 -> "Идти к NPC: Страж"
-                1 -> "Найди чем расплатиться со Стражем"
-                else -> "Готово"
+            if (q.questId == "q_guard"){
+                copy[i] = updateGuard(q, event)
+            }
+        }
+        return copy.toList()
+    }
+
+    private fun updateAlchemist(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
+        if (q.step == 0 && event is QuestBranchChosen && event.questId == q.questId){
+            return  when (event.branch){
+                QuestBranch.HELP -> q.copy(
+                    step = 1,
+                    branch = QuestBranch.HELP,
+                    progressCurrent = 0,
+                    progressTarget = 3,
+                    isNew = false
+                )
+
+                QuestBranch.THREAT -> q.copy(
+                    step = 1,
+                    branch = QuestBranch.THREAT,
+                    progressCurrent = 0,
+                    progressTarget = 10,
+                    isNew = false
+                )
+
+                QuestBranch.NONE -> q
+            }
+        }
+
+        if (q.step == 1 && q.branch == QuestBranch.HELP && event is ItemCollected && event.itemId == "Herb"){
+            val newCurrent = (q.progressCurrent + event.countAdded).coerceAtMost(q.progressTarget)
+            val update = q.copy(progressCurrent = newCurrent, isNew = false)
+
+            if (newCurrent >= q.progressTarget){
+                return update.copy(step = 2, progressCurrent = 0, progressTarget = 0)
             }
 
-            "q_cook" -> when (step) {
-                0 -> "Иди к NPC: Алхимик"
-                1 -> "Одолжи у Алхимика чан для зелья"
-                else -> "Суп готов"
+            return update
+        }
+        if (q.step == 1 && q.branch == QuestBranch.THREAT && event is GoldTurnedIn && event.questId == q.questId){
+            val newCurrent = (q.progressCurrent + event.amount).coerceAtMost(q.progressTarget)
+            val update = q.copy(progressCurrent = newCurrent, isNew = false)
+
+            if (newCurrent >= q.progressTarget){
+                return update.copy(step = 2, progressCurrent = 0, progressTarget = 0)
             }
 
-            else -> ""
+            return update
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
