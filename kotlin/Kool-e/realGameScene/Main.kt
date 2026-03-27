@@ -35,11 +35,14 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.processNextEventInCurrentThread
 import kotlinx.serialization.modules.SerializersModule
+import lesson5.Npc
 import questJournal2.CmdGiveGold
 import questJournal2.CmdSwitchPlayer
 import questJournal2.QuestStatus
 import javax.accessibility.AccessibleValue
 import javax.management.ValueExp
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 enum class QuestState{
@@ -212,11 +215,27 @@ sealed interface GameCommand{
     val playerId: String
 }
 
+fun getCirclePosition(
+    centerX: Float,
+    centerY: Float,
+    radius: Float,
+    angle: Float
+): Pair<Float, Float> {
+    val x = centerX + radius * cos(angle)
+    val y = centerY + radius * sin(angle)
+    return Pair(x, y)
+}
+
 data class CmdMovePlayer(
     override val playerId: String,
     val dx: Float,
     val dz: Float
 ): GameCommand
+
+data class CmdMoveNpc(
+    val dx: Float,
+    val dz: Float
+)
 
 data class CmdInteract(
     override val playerId: String
@@ -436,22 +455,32 @@ class GameServer {
 
                 when (obj.type){
                     WorldObjectType.ALCHEMIST -> {
-                        val oldMemory = player.alchemistMemory
-                        val newMemory = oldMemory.copy(
-                            hasMet = true,
-                            timesTalked = oldMemory.timesTalked + 1
-                        )
+                        if (player.alchemistMemory.sawPlayerNearSource){
+                            _events.emit(ServerMessage(cmd.playerId, "Так... ты тут был... ааа трава-то, где?"))
+                            return
+                        }else{
+                            val oldMemory = player.alchemistMemory
+                            val newMemory = oldMemory.copy(
+                                hasMet = true,
+                                timesTalked = oldMemory.timesTalked + 1
+                            )
 
-                        updatePlayer(cmd.playerId){ p ->
-                            p.copy(alchemistMemory = newMemory)
+
+
+                            updatePlayer(cmd.playerId){ p ->
+                                p.copy(alchemistMemory = newMemory)
+                            }
+
+                            _events.emit(InteractedWithNpc(cmd.playerId, obj.id))
+                            _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
                         }
-
-                        _events.emit(InteractedWithNpc(cmd.playerId, obj.id))
-                        _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
                     }
 
                     WorldObjectType.HERB_SOURCE -> {
-                        val newAlchemistMemory = true
+                        val oldAlchemistMemory = player.alchemistMemory
+                        val newAlchemistMemory = oldAlchemistMemory.copy(
+                            sawPlayerNearSource = true
+                        )
                         updatePlayer(cmd.playerId) { p ->
                             p.copy(alchemistMemory = newAlchemistMemory)
                         }
@@ -705,8 +734,26 @@ fun main() = KoolApplication {
             lastRenderedZ = player.posZ
         }
 
+        var alchemistAngle = 0f
+        var isPlayerNearAlchemist = false
+
         alchemistNode.onUpdate{
             transform.rotate(20f.deg * Time.deltaT, Vec3f.X_AXIS)
+
+            val activeId = hud.activePlayerIdFlow.value
+            val player = server.getPlayerData(activeId)
+            val distanceToAlchemist = distance2D(player.posX, player.posZ, -3f, 0f)
+            isPlayerNearAlchemist = distanceToAlchemist <= 1.7f
+
+            if (!isPlayerNearAlchemist) {
+                alchemistAngle += 0.5f * Time.deltaT
+                if (alchemistAngle > 2 * Math.PI.toFloat()) {
+                    alchemistAngle -= 2 * Math.PI.toFloat()
+                }
+
+                val (x, z) = getCirclePosition(-3f, 0f, 2f, alchemistAngle)
+                alchemistNode.transform.translate(x, 0f, z)
+            }
         }
 
         herbNode.onUpdate{
