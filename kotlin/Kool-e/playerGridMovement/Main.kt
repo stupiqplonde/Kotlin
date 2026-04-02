@@ -1,4 +1,4 @@
-package cutScenes
+package playerGridMovement
 
 import de.fabmax.kool.KoolApplication           // KoolApplication - запускает Kool-приложение (окно + цикл рендера)
 import de.fabmax.kool.addScene                  // addScene - функция "добавь сцену" в приложение (у тебя она просила отдельный импорт)
@@ -38,8 +38,6 @@ import kotlinx.coroutines.processNextEventInCurrentThread
 import kotlinx.serialization.modules.SerializersModule
 import javax.accessibility.AccessibleValue
 import javax.management.ValueExp
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 enum class QuestState{
@@ -49,6 +47,13 @@ enum class QuestState{
     EVIL_END
 }
 
+enum class Facing{
+    LEFT,
+    RIGHT,
+    FORWARD,
+    BACK
+}
+
 // типы объектов
 enum class WorldObjectType{
     ALCHEMIST,
@@ -56,12 +61,17 @@ enum class WorldObjectType{
     CHEST
 }
 
+data class GridPos(
+    val x: Int,
+    val z: Int
+)
+
 // описание объектов в игровом мире
 data class WorldObjectDef(
     val id: String,
     val type: WorldObjectType,
-    val x: Float,
-    val z: Float,
+    val cellX: Float,
+    val cellZ: Float,
     val interactRadius: Float
 )
 
@@ -74,36 +84,19 @@ data class NpcMemory(
 
 data class PlayerState(
     val playerId: String,
-    val posX: Float,
-    val posZ: Float,
+    val gridX: Int,
+    val gridZ: Int,
     val questState: QuestState,
     val inventory: Map<String, Int>,
     val alchemistMemory: NpcMemory,
     val currentAreaId: String?,
     val hintText: String,
     val gold: Int,
-    val nearHerbSource: Boolean,
-    val nearAlchemist: Boolean,
-
-    val inputLocked: Boolean,
-    val cutsceneActive: Boolean,
-    val cutsceneText: String
+    val facing: Facing
 )
-
 
 fun herbCount(player: PlayerState): Int{
     return player.inventory["herb"] ?: 0
-}
-
-fun getCirclePosition(
-    centerX: Float,
-    centerY: Float,
-    radius: Float,
-    angle: Float
-): Pair<Float, Float> {
-    val x = centerX + radius * cos(angle)
-    val y = centerY + radius * sin(angle)
-    return Pair(x, y)
 }
 
 //d = √((x₂ - x₁)² + (y₂ - y₁)²)
@@ -113,13 +106,31 @@ fun distance2D(ax: Float, az: Float, bx: Float, bz: Float): Float{
     return sqrt(dx*dx + dz*dz)
 }
 
+fun facingToYawDeg(facing: Facing): Float{
+    //
+    //
+    return when(facing){
+        Facing.FORWARD -> 0f
+        Facing.RIGHT -> 90f
+        Facing.BACK -> 180f
+        Facing.LEFT -> 270f
+    }
+}
+
+fun lerp(current: Float, target: Float, t: Float): Float{
+    // линейная интерполяция
+    // нужна для плавного перемещения current в сторону target
+    // формула - current + (target - current) * t
+    return current + (target - current) * t
+}
+
 fun initialPlayerState(playerId: String): PlayerState {
     return if(playerId == "Stas"){
         PlayerState(
             "Stas",
-            0f,
-            0f,
-            QuestState.START,
+            0,
+            0,
+             QuestState.START,
             emptyMap(),
             NpcMemory(
                 true,
@@ -129,18 +140,14 @@ fun initialPlayerState(playerId: String): PlayerState {
             null,
             "Подойди к одной из локаций",
             3,
-            false,
-            false,
-            false,
-            false,
-            ""
+            Facing.FORWARD
         )
     }else{
         PlayerState(
             "Oleg",
-            0f,
-            0f,
-            QuestState.START,
+            0,
+            0,
+             QuestState.START,
             emptyMap(),
             NpcMemory(
                 false,
@@ -150,11 +157,7 @@ fun initialPlayerState(playerId: String): PlayerState {
             null,
             "Подойди к одной из локаций",
             3,
-            false,
-            false,
-            false,
-            false,
-            ""
+            Facing.FORWARD
         )
     }
 }
@@ -170,29 +173,12 @@ data class DialogueView(
     val option: List<DialogueOption>
 )
 
-fun buildAlchemistDialogue(player: PlayerState): DialogueView{
-    // если идет катсцена - обычный диалог - отключаем
-    if (player.cutsceneActive){
-        return DialogueView(
-            "Алхимик",
-            "Сейчас идет катсцена",
-            emptyList()
-        )
-    }
-    
-    if (!player.nearAlchemist){
-        return DialogueView(
-            "Алхимик",
-            "Подойди ближе к Алхимику",
-            emptyList()
-        )
-    }
-    
+fun buildAlchemistDialogue(player:  PlayerState):  DialogueView {
     val herbs = herbCount(player)
     val memory = player.alchemistMemory
 
     return when(player.questState){
-        QuestState.START -> {
+         QuestState.START -> {
             val greeting =
                 if (!memory.hasMet){
                     "О привет"
@@ -209,7 +195,7 @@ fun buildAlchemistDialogue(player: PlayerState): DialogueView{
             )
         }
 
-        QuestState.WAIT_HERB ->{
+         QuestState.WAIT_HERB ->{
             if (herbs < 3){
                 DialogueView(
                     "Алхимик",
@@ -227,7 +213,7 @@ fun buildAlchemistDialogue(player: PlayerState): DialogueView{
             }
         }
 
-        QuestState.GOOD_END -> {
+         QuestState.GOOD_END -> {
             val text =
                 if (memory.receivedHerb){
                     "Спасибо спасибо"
@@ -241,7 +227,7 @@ fun buildAlchemistDialogue(player: PlayerState): DialogueView{
             )
         }
 
-        QuestState.EVIL_END -> {
+         QuestState.EVIL_END -> {
 
             DialogueView(
                 "Алхимик",
@@ -256,16 +242,11 @@ sealed interface GameCommand{
     val playerId: String
 }
 
-data class CmdMovePlayer(
+data class CmdStepMove(
     override val playerId: String,
-    val dx: Float,
-    val dz: Float
+    val stepX: Int,
+    val stepZ: Int
 ): GameCommand
-
-data class CmdMoveNpc(
-    val dx: Float,
-    val dz: Float
-)
 
 data class CmdInteract(
     override val playerId: String
@@ -283,6 +264,18 @@ data class CmdResetPlayer(
 sealed interface GameEvent{
     val playerId: String
 }
+
+data class PlayerMoved(
+    override val playerId: String,
+    val newGridX: Int,
+    val newGridZ: Int
+): GameEvent
+
+data class MovedBlocked(
+    override val playerId: String,
+    val blockedX: Int,
+    val blockedZ: Int
+): GameEvent
 
 data class EnteredArea(
     override val playerId: String,
@@ -322,14 +315,14 @@ data class InventoryChanged(
 
 data class QuestStateChanged(
     override val playerId: String,
-    val newState:   
-QuestState
+    val newState:
+     QuestState
 ): GameEvent
 
 data class NpcMemoryChanged(
     override val playerId: String,
-    val memory:   
-NpcMemory
+    val memory:
+     NpcMemory
 ): GameEvent
 
 data class ServerMessage(
@@ -352,47 +345,63 @@ data class CutSceneFinished(
     val cutsceneId: String
 ): GameEvent
 
-
 class GameServer {
+    
+    // размер карты
+    
+    private val minX = -5
+    private val maxX = 5
+    private val minZ = -4
+    private val maxZ = 4
+    
+    // подготовка клеток на которые нельзя зайти
+    private val blockedCells = setOf(
+        GridPos(-1, 1),
+        GridPos(0, 1),
+        GridPos(1, 1),
+        GridPos(1, 0)
+    )
+    
     val worldObjects = listOf(
         WorldObjectDef(
             "alchemist",
-              
- WorldObjectType.ALCHEMIST,
+
+             WorldObjectType.ALCHEMIST,
             -3f,
             0f,
             1.7f
         ),
         WorldObjectDef(
             "herb_source",
-              
- WorldObjectType.HERB_SOURCE,
+
+             WorldObjectType.HERB_SOURCE,
             3f,
             0f,
             1.7f
         ),
         WorldObjectDef(
             "treasure_box",
-              
- WorldObjectType.CHEST,
+
+             WorldObjectType.CHEST,
             7f,
             0f,
             1.7f
         )
     )
 
-    private val _events = MutableSharedFlow<  
- GameEvent>(extraBufferCapacity = 64)
-    val events: SharedFlow<  
- GameEvent> = _events.asSharedFlow()
+    private val _events = MutableSharedFlow<
+             GameEvent>(extraBufferCapacity = 64)
+    val events: SharedFlow<
+             GameEvent> = _events.asSharedFlow()
 
-    private val _commands = MutableSharedFlow<  
- GameCommand>(extraBufferCapacity = 64)
-    val commands: SharedFlow<  
- GameCommand> = _commands.asSharedFlow()
+    private val _commands = MutableSharedFlow<
+             GameCommand>(extraBufferCapacity = 64)
+    val commands: SharedFlow<
+             GameCommand> = _commands.asSharedFlow()
 
-    fun trySend(cmd:   
- GameCommand): Boolean = _commands.tryEmit(cmd)
+    fun trySend(cmd:
+                 GameCommand
+    ): Boolean = _commands.tryEmit(cmd)
 
     private val _players = MutableStateFlow(
         mapOf(
@@ -401,8 +410,8 @@ class GameServer {
         )
     )
 
-    val players: StateFlow<Map<String,   
- PlayerState>> = _players.asStateFlow()
+    val players: StateFlow<Map<String,
+             PlayerState>> = _players.asStateFlow()
 
     private val _treasureChestVisible = MutableStateFlow(false)
     val treasureChestVisible: StateFlow<Boolean> = _treasureChestVisible.asStateFlow()
@@ -417,21 +426,20 @@ class GameServer {
         }
     }
 
-    fun setPlayerData(playerId: String, data:   
- PlayerState) {
+    fun setPlayerData(playerId: String, data:
+     PlayerState
+    ) {
         val map = _players.value.toMutableMap()
         map[playerId] = data
         _players.value = map.toMap()
     }
 
-    fun getPlayerData(playerId: String):   
- PlayerState {
+    fun getPlayerData(playerId: String):
+             PlayerState {
         return _players.value[playerId] ?: initialPlayerState(playerId)
     }
 
-    private fun updatePlayer(playerId: String, change: (  
- PlayerState) ->   
- PlayerState) {
+    private fun updatePlayer(playerId: String, change: (PlayerState) -> PlayerState) {
         val oldMap = _players.value
         val oldPlayer = oldMap[playerId] ?: return
 
@@ -441,6 +449,17 @@ class GameServer {
         newMap[playerId] = newPlayer
         _players.value = newMap.toMap()
     }
+    
+    private fun isCellInsideMap(x: Int, z: Int): Boolean{
+        // находится ли клетка для перемещения в допустимой клетке
+        return x in minX .. maxX && z in minZ .. maxZ
+        // x in minX..maxX - "входит в диапазон"
+    }
+    
+    private fun isCellBlocked(x: Int, z: Int): Boolean{
+        // проверка, запрещена ли клетка для входа в нее
+        return GridPos(x, z) in blockedCells
+    }
 
     // cutsceneJobs[playerId] = текущая катсцена этого игрока
     private val cutsceneJobs = mutableMapOf<String, Job>()
@@ -449,13 +468,16 @@ class GameServer {
 
 
 
-    private fun nearestObject(player: PlayerState): WorldObjectDef? {
+    private fun nearestObject(player:  PlayerState): WorldObjectDef?{
+        val px = player.gridX.toFloat()
+        val pz = player.gridZ.toFloat()
+        
         val candidates = worldObjects.filter { obj ->
-            distance2D(player.posX, player.posZ, obj.x, obj.z) <= obj.interactRadius
+            distance2D(px, pz, obj.cellX, obj.cellZ) <= obj.interactRadius
         }
 
         return candidates.minByOrNull { obj ->
-            distance2D(player.posX, player.posZ, obj.x, obj.z)
+            distance2D(px, pz, obj.cellX, obj.cellZ)
         }
 
         // minBy - берет ближайший объект до игрока
@@ -500,23 +522,50 @@ class GameServer {
         }
     }
 
-    private suspend fun processCommand(cmd: GameCommand){
+    private suspend fun processCommand(cmd:  GameCommand){
         when(cmd){
-            is CmdMovePlayer -> {
+            is CmdStepMove -> {
                 val player = getPlayerData(cmd.playerId)
+                val targetX = player.gridX + cmd.stepX
+                val targetZ = player.gridZ + cmd.stepZ
 
-                // пока идет катсцена - движение запрещаем
-                if (player.cutsceneActive){
-                    _events.emit(ServerMessage(cmd.playerId, "Управление заблокированно, идет катсцена"))
+                val newFacing =
+                    when{
+                        cmd.stepX < 0 -> Facing.LEFT
+                        cmd.stepX > 0 -> Facing.RIGHT
+                        cmd.stepZ < 0 -> Facing.FORWARD
+                        else -> Facing.BACK
+                    }
+                if (!isCellInsideMap(targetX, targetZ)){
+                    _events.emit(ServerMessage(cmd.playerId, "нельзя уйти из зоны"))
+                    _events.emit(MovedBlocked(cmd.playerId, targetX, targetZ))
+                    
+                    updatePlayer(cmd.playerId){ p ->
+                        p.copy(facing = newFacing)
+                    }
                     return
                 }
+                
+                if (isCellBlocked(targetX, targetZ)){
+                    _events.emit(ServerMessage(cmd.playerId, "нельзя уйти из зоны"))
+                    _events.emit(MovedBlocked(cmd.playerId, targetX, targetZ))
 
-                updatePlayer(cmd.playerId) { p ->
+                    updatePlayer(cmd.playerId){ p ->
+                        p.copy(facing = newFacing)
+                    }
+                    return
+                }
+                
+                updatePlayer(cmd.playerId){ p -> 
                     p.copy(
-                        posX = p.posX + cmd.dx,
-                        posZ = p.posZ + cmd.dz
+                        gridX = targetX,
+                        gridZ = targetZ,
+                        facing = newFacing
                     )
                 }
+                
+                _events.emit(PlayerMoved(cmd.playerId, targetX, targetZ))
+                
                 refreshPlayerArea(cmd.playerId)
             }
 
@@ -530,7 +579,7 @@ class GameServer {
                 }
 
                 when (obj.type){
-                    WorldObjectType.ALCHEMIST -> {
+                     WorldObjectType.ALCHEMIST -> {
                         if (player.alchemistMemory.sawPlayerNearSource){
                             _events.emit(ServerMessage(cmd.playerId, "Так... ты тут был... ааа трава-то, где?"))
                             return
@@ -552,7 +601,7 @@ class GameServer {
                         }
                     }
 
-                    WorldObjectType.HERB_SOURCE -> {
+                     WorldObjectType.HERB_SOURCE -> {
                         val oldAlchemistMemory = player.alchemistMemory
                         val newAlchemistMemory = oldAlchemistMemory.copy(
                             sawPlayerNearSource = true
@@ -560,7 +609,7 @@ class GameServer {
                         updatePlayer(cmd.playerId) { p ->
                             p.copy(alchemistMemory = newAlchemistMemory)
                         }
-                        if (player.questState != QuestState.WAIT_HERB){
+                        if (player.questState !=  QuestState.WAIT_HERB){
                             _events.emit(ServerMessage(cmd.playerId, "Трава сейчас не нужна, сначала возьми квест"))
                             return
                         }
@@ -577,13 +626,13 @@ class GameServer {
                         _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
                     }
 
-                    WorldObjectType.CHEST -> {
+                     WorldObjectType.CHEST -> {
                         if (!_treasureChestVisible.value) {
                             _events.emit(ServerMessage(cmd.playerId, "Сундук пуст или его здесь нет..."))
                             return
                         }
 
-                        if (player.questState != QuestState.GOOD_END) {
+                        if (player.questState !=  QuestState.GOOD_END) {
                             _events.emit(ServerMessage(cmd.playerId, "Сундук заперт. Нужно сначала помочь алхимику"))
                             return
                         }
@@ -614,18 +663,18 @@ class GameServer {
 
                 when(cmd.optionId){
                     "accepted_help" -> {
-                        val radiusHerb = distance2D(player.posX, player.posZ, 3f, 0f)
+                        val radiusHerb = distance2D(player.gridX.toFloat(), player.gridZ.toFloat(), 3f, 0f)
                         if (radiusHerb <= 1.7f){
-                            if (player.questState != QuestState.START){
+                            if (player.questState !=  QuestState.START){
                                 _events.emit(ServerMessage(cmd.playerId, "Путь помощи можно выбрать только в начале квеста"))
                                 return
                             }
 
                             updatePlayer(cmd.playerId){ p ->
-                                p.copy(questState = QuestState.WAIT_HERB)
+                                p.copy(questState =  QuestState.WAIT_HERB)
                             }
 
-                            _events.emit(QuestStateChanged(cmd.playerId, QuestState.WAIT_HERB))
+                            _events.emit(QuestStateChanged(cmd.playerId,  QuestState.WAIT_HERB))
                             _events.emit(ServerMessage(cmd.playerId, "Алхимик просит собрать х3 травы"))
                         }
                         else {
@@ -635,7 +684,7 @@ class GameServer {
 
                     }
                     "give_herb" -> {
-                        if (player.questState != QuestState.WAIT_HERB) {
+                        if (player.questState !=  QuestState.WAIT_HERB) {
                             _events.emit(ServerMessage(cmd.playerId, "Сейчас нельзя сдать траву"))
                         }
 
@@ -658,7 +707,7 @@ class GameServer {
                             p.copy(
                                 inventory = newInventory,
                                 gold = p.gold + 5,
-                                questState = QuestState.GOOD_END,
+                                questState =  QuestState.GOOD_END,
                                 alchemistMemory = newMemory
                             )
                         }
@@ -666,7 +715,7 @@ class GameServer {
 
                         _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
                         _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
-                        _events.emit(QuestStateChanged(cmd.playerId, QuestState.GOOD_END))
+                        _events.emit(QuestStateChanged(cmd.playerId,  QuestState.GOOD_END))
                         _events.emit(ServerMessage(cmd.playerId, "Алхимик получил траву и выдал тебе золото"))
                     }
 
@@ -677,87 +726,9 @@ class GameServer {
             }
 
             is CmdResetPlayer -> {
-                updatePlayer(cmd.playerId) { _ -> initialPlayerState(cmd.playerId)}
+                updatePlayer(cmd.playerId) { _ -> initialPlayerState(cmd.playerId) }
                 _events.emit(ServerMessage(cmd.playerId, "Игрок сброшен к начальному уровню"))
             }
-        }
-    }
-
-    private fun startRewardCutscene(playerId: String){
-        val scope = serverScope ?: return
-
-        // если кат-сцена идет, то вторую не запускаем
-        if (cutsceneJobs[playerId]?.isActive == true){
-            scope.launch {
-                _events.emit(ServerMessage(playerId, "Кат-сцена уже запущенна"))
-            }
-            return
-        }
-
-        val job = scope.launch {
-            // блокируем управление игроком при старте кат-сцены
-            updatePlayer(playerId){ p ->
-                p.copy(
-                    inputLocked = true,
-                    cutsceneActive = true,
-                    cutsceneText = "Алхимик варит траву"
-                )
-            }
-
-            _events.emit(CutSceneStarted(playerId, "alchemist_reward"))
-            _events.emit(CutSceneStep(playerId, "Алхимик варит траву"))
-
-            delay(1200)
-
-            val p1 = getPlayerData(playerId)
-            val herbs = herbCount(p1)
-            val newCount = herbs - 3
-
-            val newInventory =
-                if (newCount <= 0) p1.inventory  - "herb" else p1.inventory + ("herb" to newCount)
-
-            val newMemory = p1.alchemistMemory.copy(
-                receivedHerb = true
-            )
-
-            updatePlayer(playerId){ p ->
-                p.copy(
-                    inventory = newInventory,
-                    alchemistMemory = newMemory,
-                    cutsceneText = "Алхимик смешивает ингредиенты"
-                )
-            }
-
-            _events.emit(InventoryChanged(playerId, "herb", newCount))
-            _events.emit(NpcMemoryChanged(playerId, newMemory))
-            _events.emit(CutSceneStep(playerId, "Алхимик смешивает ингредиенты"))
-
-            delay(1200)
-
-            updatePlayer(playerId){ p ->
-                p.copy(
-                    gold = p.gold + 5,
-                    questState = QuestState.GOOD_END,
-                    cutsceneText = "Алхимик хочет дать награду"
-                )
-            }
-
-            _events.emit(QuestStateChanged(playerId, QuestState.GOOD_END))
-            _events.emit(CutSceneStep(playerId, "Алхимик дает награду"))
-
-            delay(900)
-
-            updatePlayer(playerId){ p ->
-                p.copy(
-                    inputLocked = false,
-                    cutsceneActive = false,
-                    cutsceneText = "",
-                    hintText = "конец кат-сцены"
-                )
-            }
-
-            _events.emit(CutSceneFinished(playerId, "alchemist_reward"))
-            _events.emit(ServerMessage(playerId, "Кат-сцена завершена, управление возвращено"))
         }
     }
 }
@@ -813,17 +784,16 @@ fun formatMemory(memory:  NpcMemory): String{
 
 fun eventToText(e:  GameEvent): String{
     return when(e){
-        is EnteredArea -> "EnteredArea ${e.areaId}"
-        is LeftArea -> "LeftArea ${e.areaId}"
-        is InteractedWithNpc -> "InteractedWithNpc ${e.npcId}"
-        is InteractedWithHerbSource -> "InteractedWithHerbSource ${e.sourceId}"
-        is InventoryChanged -> "InventoryChanged ${e.itemId} -> ${e.newCount}"
-        is QuestStateChanged -> "QuestStateChanged ${e.newState}"
-        is NpcMemoryChanged -> "NpcMemoryChanged Встретился: ${e.memory.hasMet}, сколько раз поговорил: ${e.memory.timesTalked}, отдал траву: ${e.memory.receivedHerb}"
-        is ServerMessage -> "Server: ${e.text}"
-        is CutSceneStep -> "CutSceneStep ${e.text}"
-        is CutSceneStarted -> "CutSceneStarted ${e.cutsceneId}"
-        is CutSceneFinished -> "CutSceneFinished ${e.cutsceneId}"
+        is PlayerMoved -> "PlayerMoved (${e.newGridX}, ${e.newGridZ})"
+        is MovedBlocked -> "MovedBlocked (${e.blockedX}, ${e.blockedZ})"
+        is  EnteredArea -> "EnteredArea ${e.areaId}"
+        is  LeftArea -> "LeftArea ${e.areaId}"
+        is  InteractedWithNpc -> "InteractedWithNpc ${e.npcId}"
+        is  InteractedWithHerbSource -> "InteractedWithHerbSource ${e.sourceId}"
+        is  InventoryChanged -> "InventoryChanged ${e.itemId} -> ${e.newCount}"
+        is  QuestStateChanged -> "QuestStateChanged ${e.newState}"
+        is  NpcMemoryChanged -> "NpcMemoryChanged Встретился: ${e.memory.hasMet}, сколько раз поговорил: ${e.memory.timesTalked}, отдал траву: ${e.memory.receivedHerb}"
+        is  ServerMessage -> "Server: ${e.text}"
         else -> ""
     }
 }
@@ -835,42 +805,81 @@ fun main() = KoolApplication {
     addScene {
         defaultOrbitCamera()
 
+        // строим пол из мелких кубов
+        for (x in -5 .. 5){
+            for (z in -4 .. 4){
+                addColorMesh {
+                    generate { cube{colored()} }
+
+                    shader = KslPbrShader{
+                        color { vertexColor() }
+                        metallic (0f)
+                        roughness (0.25f)
+                    }
+                }
+                    .transform.translate(x.toFloat(), -1.2f, z.toFloat())
+                    // сдвигаем плитку в мире
+                    // y = -1.2f опускаем пол ниже игрока
+            }
+        }
+        val wallCells = listOf(
+            GridPos(-1, 1),
+            GridPos(0, 1),
+            GridPos(1, 1),
+            GridPos(1, 0)
+        )
+
+        for (cell in wallCells){
+            addColorMesh {
+                generate { cube{colored()} }
+
+                shader = KslPbrShader{
+                    color { vertexColor() }
+                    metallic (0f)
+                    roughness (0.25f)
+                }
+            }
+                .transform.translate(cell.x.toFloat(), -1.2f, cell.z.toFloat())
+            // сдвигаем плитку в мире
+            // y = -1.2f опускаем пол ниже игрока
+        }
+
         val playerNode = addColorMesh {
             generate {
-                cube {
+                cube{
                     colored()
                 }
             }
-            shader = KslPbrShader {
+            shader = KslPbrShader{
                 color { vertexColor() }
-                metallic(0f)
-                roughness(0.25f)
+                metallic (0f)
+                roughness (0.25f)
             }
         }
 
         val alchemistNode = addColorMesh {
             generate {
-                cube {
+                cube{
                     colored()
                 }
             }
-            shader = KslPbrShader {
+            shader = KslPbrShader{
                 color { vertexColor() }
-                metallic(0f)
-                roughness(0.25f)
+                metallic (0f)
+                roughness (0.25f)
             }
         }
 
         val treasureChestNode = addColorMesh {
             generate {
-                cube {
+                cube{
                     colored()
                 }
             }
-            shader = KslPbrShader {
+            shader = KslPbrShader{
                 color { vertexColor() }
-                metallic(0f)
-                roughness(0.25f)
+                metallic (0f)
+                roughness (0.25f)
             }
         }
 
@@ -881,14 +890,14 @@ fun main() = KoolApplication {
 
         val herbNode = addColorMesh {
             generate {
-                cube {
+                cube{
                     colored()
                 }
             }
-            shader = KslPbrShader {
+            shader = KslPbrShader{
                 color { vertexColor() }
-                metallic(0f)
-                roughness(0.25f)
+                metallic (0f)
+                roughness (0.25f)
             }
         }
 
@@ -901,59 +910,40 @@ fun main() = KoolApplication {
 
         server.start(coroutineScope)
 
-        var lastRenderedX = 0f
-        var lastRenderedZ = 0f
+        var renderX = 0f
+        var renderZ = 0f
+        var lastAppliedX = 0f
+        var lastAppliedZ = 0f
 
-        playerNode.onUpdate {
+        var lastAppliedYaw = 0f
+
+        playerNode.onUpdate{
             val activeId = hud.activePlayerIdFlow.value
             val player = server.getPlayerData(activeId)
 
-            val dx = player.posX - lastRenderedX
-            val dz = player.posZ - lastRenderedZ
+            val targetX = player.gridX.toFloat()
+            val targetZ = player.gridZ.toFloat()
+
+            val speed = Time.deltaT * 8f
+            val t = if(speed > 1f) 1f else speed
+
+            renderX = lerp(renderX, targetX, t)
+            renderZ = lerp(renderZ, targetZ, t)
+
+            val dx = renderX - lastAppliedX
+            val dz = renderZ - lastAppliedZ
 
             playerNode.transform.translate(dx, 0f, dz)
 
-            lastRenderedX = player.posX
-            lastRenderedZ = player.posZ
-        }
+            lastAppliedX = renderX
+            lastAppliedZ = renderZ
 
-        var alchemistAngle = 0f
-        var isPlayerNearAlchemist = false
+            val targetYaw = facingToYawDeg(player.facing)
+            val yawDelta = targetYaw - lastAppliedYaw
 
-        alchemistNode.onUpdate {
-            transform.rotate(20f.deg * Time.deltaT, Vec3f.X_AXIS)
+            playerNode.transform.rotate(yawDelta.deg, Vec3f.Y_AXIS)
 
-            val activeId = hud.activePlayerIdFlow.value
-            val player = server.getPlayerData(activeId)
-            val distanceToAlchemist = distance2D(player.posX, player.posZ, -3f, 0f)
-            isPlayerNearAlchemist = distanceToAlchemist <= 1.7f
-
-            if (!isPlayerNearAlchemist) {
-                alchemistAngle += 0.5f * Time.deltaT
-                if (alchemistAngle > 2 * Math.PI.toFloat()) {
-                    alchemistAngle -= 2 * Math.PI.toFloat()
-                }
-
-                val (x, z) = getCirclePosition(-3f, 0f, 2f, alchemistAngle)
-                alchemistNode.transform.translate(x, 0f, z)
-            }
-        }
-
-        herbNode.onUpdate {
-            
-            val activeId = hud.activePlayerIdFlow.value
-            val player = server.getPlayerData(activeId)
-            
-            val speed = if (player.cutsceneActive) 120f else 20f            
-            transform.rotate(speed.deg * Time.deltaT, Vec3f.X_AXIS)
-        }
-
-        treasureChestNode.onUpdate {
-            isVisible = server.treasureChestVisible.value
-
-            if (isVisible) {
-                transform.rotate(30f.deg * Time.deltaT, Vec3f.Y_AXIS)
-            }
+            lastAppliedYaw = targetYaw
         }
     }
 
@@ -996,7 +986,8 @@ fun main() = KoolApplication {
                     modifier.margin(bottom = sizes.gap)
                 }
 
-                Text("Позиция: x=${"%.1f".format(player.posX)} z=${"%.1f".format(player.posZ)}") {}
+                Text("Позиция: x=${"%.1f".format(player.gridX)} z=${"%.1f".format(player.gridZ)}") {}
+                Text("Смотрит: ${player.facing}"){ modifier.margin(bottom = sizes.smallGap) }
                 Text("Quest State: ${player.questState}") {
                     modifier.font(sizes.smallText)
                 }
@@ -1014,14 +1005,6 @@ fun main() = KoolApplication {
                 }
                 Text("Npc Memory: ${formatMemory(player.alchemistMemory)}") {
                     modifier.font(sizes.smallText).margin(bottom = sizes.smallGap)
-                }
-
-                if (player.cutsceneActive){
-                    Text("CUTSCENE: ${player.cutsceneText}"){
-                        modifier
-                            .margin(bottom = sizes.gap)
-                            .font(sizes.largeText)
-                    }
                 }
 
                 Row {
@@ -1045,22 +1028,22 @@ fun main() = KoolApplication {
                 Row {
                     Button("Лево") {
                         modifier.margin(end = 8.dp).onClick {
-                            server.trySend(CmdMovePlayer(player.playerId, dx = -0.5f, dz = 0f))
+                            server.trySend(CmdStepMove(player.playerId, stepX = -1, stepZ = 0))
                         }
                     }
                     Button("Право") {
                         modifier.margin(end = 8.dp).onClick {
-                            server.trySend(CmdMovePlayer(player.playerId, dx = 0.5f, dz = 0f))
+                            server.trySend(CmdStepMove(player.playerId, stepX = 1, stepZ = 0))
                         }
                     }
                     Button("Вперед") {
                         modifier.margin(end = 8.dp).onClick {
-                            server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = -0.5f))
+                            server.trySend(CmdStepMove(player.playerId,stepX = 0, stepZ = -1))
                         }
                     }
                     Button("Назад") {
                         modifier.margin(end = 8.dp).onClick {
-                            server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = 0.5f))
+                            server.trySend(CmdStepMove(player.playerId, stepX = 0, stepZ = 1))
                         }
                     }
                 }
@@ -1107,32 +1090,3 @@ fun main() = KoolApplication {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
