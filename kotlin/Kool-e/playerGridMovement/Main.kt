@@ -359,7 +359,8 @@ class GameServer {
         GridPos(-1, 1),
         GridPos(0, 1),
         GridPos(1, 1),
-        GridPos(1, 0)
+        GridPos(1, 0),
+        GridPos(-2, 0)
     )
     
     val worldObjects = listOf(
@@ -417,6 +418,11 @@ class GameServer {
     val treasureChestVisible: StateFlow<Boolean> = _treasureChestVisible.asStateFlow()
 
     fun isTreasureChestVisible(): Boolean = _treasureChestVisible.value
+
+    private val _HerbVisible = MutableStateFlow(false)
+    val HerbVisible: StateFlow<Boolean> = _HerbVisible.asStateFlow()
+
+    fun isHerbVisible(): Boolean = _HerbVisible.value
 
     fun start(scope: kotlinx.coroutines.CoroutineScope) {
         scope.launch {
@@ -602,28 +608,36 @@ class GameServer {
                     }
 
                      WorldObjectType.HERB_SOURCE -> {
-                        val oldAlchemistMemory = player.alchemistMemory
-                        val newAlchemistMemory = oldAlchemistMemory.copy(
+                         if (!_HerbVisible.value) {
+                             _events.emit(ServerMessage(cmd.playerId, "Травы здесь нет..."))
+                             return
+                         }
+
+                         val oldAlchemistMemory = player.alchemistMemory
+                         val newAlchemistMemory = oldAlchemistMemory.copy(
                             sawPlayerNearSource = true
-                        )
-                        updatePlayer(cmd.playerId) { p ->
+                         )
+                         updatePlayer(cmd.playerId) { p ->
                             p.copy(alchemistMemory = newAlchemistMemory)
-                        }
-                        if (player.questState !=  QuestState.WAIT_HERB){
+                         }
+                         if (player.questState !=  QuestState.WAIT_HERB){
                             _events.emit(ServerMessage(cmd.playerId, "Трава сейчас не нужна, сначала возьми квест"))
+                             _HerbVisible.value = false
                             return
-                        }
+                         }
 
-                        val oldCount = herbCount(player)
-                        val newCount = oldCount + 1
-                        val newInventory = player.inventory + ("herb" to newCount)
+                         val oldCount = herbCount(player)
+                         val newCount = oldCount + 1
+                         val newInventory = player.inventory + ("herb" to newCount)
 
-                        updatePlayer(cmd.playerId) { p ->
-                            p.copy(inventory = newInventory)
-                        }
+                         updatePlayer(cmd.playerId) { p ->
+                             p.copy(inventory = newInventory)
+                         }
 
-                        _events.emit(InteractedWithHerbSource(cmd.playerId, obj.id))
-                        _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
+                         if (newCount >= 3) _HerbVisible.value = false
+
+                         _events.emit(InteractedWithHerbSource(cmd.playerId, obj.id))
+                         _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
                     }
 
                      WorldObjectType.CHEST -> {
@@ -663,6 +677,7 @@ class GameServer {
 
                 when(cmd.optionId){
                     "accepted_help" -> {
+                        _HerbVisible.value = true
                         val radiusHerb = distance2D(player.gridX.toFloat(), player.gridZ.toFloat(), 3f, 0f)
                         if (radiusHerb <= 1.7f){
                             if (player.questState !=  QuestState.START){
@@ -684,6 +699,7 @@ class GameServer {
 
                     }
                     "give_herb" -> {
+                        _HerbVisible.value = false
                         if (player.questState !=  QuestState.WAIT_HERB) {
                             _events.emit(ServerMessage(cmd.playerId, "Сейчас нельзя сдать траву"))
                         }
@@ -826,7 +842,8 @@ fun main() = KoolApplication {
             GridPos(-1, 1),
             GridPos(0, 1),
             GridPos(1, 1),
-            GridPos(1, 0)
+            GridPos(1, 0),
+            GridPos(-2, 0)
         )
 
         for (cell in wallCells){
@@ -900,8 +917,17 @@ fun main() = KoolApplication {
                 roughness (0.25f)
             }
         }
-
         herbNode.transform.translate(3f, 0f, 0f)
+        
+        herbNode.isVisible = true
+
+        herbNode.onUpdate{
+            isVisible = server.HerbVisible.value
+
+            if (isVisible){
+                transform.translate(3f, 0f, 0f)
+            }
+        }
 
         lighting.singleDirectionalLight {
             setup(Vec3f(-1f, -1f, -1f))
@@ -986,7 +1012,7 @@ fun main() = KoolApplication {
                     modifier.margin(bottom = sizes.gap)
                 }
 
-                Text("Позиция: x=${"%.1f".format(player.gridX)} z=${"%.1f".format(player.gridZ)}") {}
+                Text("Позиция: x=${"%d".format(player.gridX)} z=${"%d".format(player.gridZ)}") {}
                 Text("Смотрит: ${player.facing}"){ modifier.margin(bottom = sizes.smallGap) }
                 Text("Quest State: ${player.questState}") {
                     modifier.font(sizes.smallText)
@@ -1044,6 +1070,11 @@ fun main() = KoolApplication {
                     Button("Назад") {
                         modifier.margin(end = 8.dp).onClick {
                             server.trySend(CmdStepMove(player.playerId, stepX = 0, stepZ = 1))
+                        }
+                    }
+                    Button("быстрый шаг") {
+                        modifier.margin(end = 8.dp).onClick {
+                            server.trySend(CmdStepMove(player.playerId, stepX = 0, stepZ = -2))
                         }
                     }
                 }
